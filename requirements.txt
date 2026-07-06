@@ -1,0 +1,6 @@
+openai
+httpx
+mcp
+pandas
+python-dotenv
+ipython
