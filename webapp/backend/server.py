@@ -10,9 +10,9 @@ from sse_starlette.sse import EventSourceResponse
 
 from hunter import config
 from hunter import memory
+from hunter import history
 from hunter import dev
 from hunter import dev_store
-from hunter import history_store as history
 from hunter import creds_store as creds
 from hunter.chat import stream_chat
 from hunter.pipeline import run_pipeline
@@ -30,10 +30,10 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="RepoHunter", lifespan=lifespan)
 
-# 建历史表、仓库记忆表、对话历史表、提取记忆表，不存在才建，server 一起来就保证表都在。
-# init_notes 给 chat_sessions 补笔记列，要在 init_chat_sessions 建好表之后
-history.init_db()
-memory.init_repo_memory()
+# 建搜索账本表、仓库账本表（同一个 history.db），对话历史表、提取记忆表，不存在才建，
+# server 一起来就保证表都在。init_notes 给 chat_sessions 补笔记列，要在 init_chat_sessions 建好表之后
+history.init_runs()
+history.init_repo_memory()
 memory.init_chat_sessions()
 memory.init_chat_memories()
 memory.init_notes()
@@ -47,8 +47,8 @@ class RunRequest(BaseModel):
     # 前端运行时填的密钥与各阶段模型，每次 run 注入；留空表示沿用 .env / config 默认
     deepseek_api_key: str = ""
     github_pat: str = ""
-    qu_model: str = ""
-    content_model: str = ""
+    # 阶段名到模型名的 dict，前端组装好六键发上来，空值的阶段 configure 会跳过保持默认
+    models: dict = {}
     # 业务参数：keypoints 是用户一条条写的需求，languages 走检索硬过滤
     keypoints: list[str] = []
     languages: list[str] = []
@@ -63,12 +63,15 @@ class CredsRequest(BaseModel):
     deepseek_api_key: str = ""
     github_pat: str = ""
     model: str = ""
+    # 各阶段模型配置，跟凭证一起记住，下次带出来预填设置界面
+    models: dict = {}
 
 
 class ChatRequest(BaseModel):
     # 右栏对话：多轮历史 + 注入的 repo 全名，密钥单独带一份好独立注入
     deepseek_api_key: str = ""
-    model: str = ""
+    # 各阶段模型 dict，对话侧只用到 chat/recall/extract，多发无妨
+    models: dict = {}
     messages: list[dict] = []
     context: list[str] = []
     # 会话 id，提取记忆按它读写游标；空串就不触发提取（只答不提）
@@ -108,7 +111,7 @@ async def creds_get() -> dict:
 @app.post("/creds")
 async def creds_save(req: CredsRequest) -> dict:
     # 进入时存这次填的，改了就覆盖旧的
-    await asyncio.to_thread(creds.save_creds, req.deepseek_api_key, req.github_pat, req.model)
+    await asyncio.to_thread(creds.save_creds, req.deepseek_api_key, req.github_pat, req.model, req.models)
     return {"status": "ok"}
 
 
@@ -118,10 +121,7 @@ async def run(req: RunRequest) -> EventSourceResponse:
     config.configure(
         deepseek_api_key=req.deepseek_api_key,
         github_pat=req.github_pat,
-        models={
-            "query_understanding": req.qu_model,
-            "content_filter":      req.content_model,
-        },
+        models=req.models,
     )
     params = {
         "keypoints":       req.keypoints,
@@ -141,10 +141,10 @@ async def run(req: RunRequest) -> EventSourceResponse:
 
 @app.post("/chat")
 async def chat(req: ChatRequest) -> EventSourceResponse:
-    # 对话密钥单独注入，model 借 content_filter 那档，hunter.chat 里也是取的它
+    # 对话密钥单独注入，各阶段模型走 models dict，hunter.chat 里取 chat/recall/extract
     config.configure(
         deepseek_api_key=req.deepseek_api_key,
-        models={"content_filter": req.model},
+        models=req.models,
     )
 
     # hunter.chat 吐中性事件 dict，这层把每个包成 SSE 帧再流出去
@@ -157,15 +157,15 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
 
 @app.get("/history")
 async def history_list() -> dict:
-    # 只返摘要列，列表页不取大块的 ranked/cost。sqlite 是阻塞 IO 用 to_thread 包
-    items = await asyncio.to_thread(history.list_queries)
+    # 只返摘要列，列表页不取大块的 results/cost。sqlite 是阻塞 IO 用 to_thread 包
+    items = await asyncio.to_thread(history.list_runs)
     return {"items": items}
 
 
 @app.get("/history/{qid}")
 async def history_get(qid: int):
-    # 取完整一条，点开详情用，不存在回 404
-    item = await asyncio.to_thread(history.get_query, qid)
+    # 取完整一次搜索，点开详情用（拆解按名字从仓库账本 JOIN 回来），不存在回 404
+    item = await asyncio.to_thread(history.get_run, qid)
     if item is None:
         return JSONResponse({"error": "历史不存在"}, status_code=404)
     return item
@@ -173,8 +173,8 @@ async def history_get(qid: int):
 
 @app.delete("/history/{qid}/repo")
 async def history_delete_repo(qid: int, full_name: str):
-    # 单删一条历史里的一个仓库，full_name 带斜杠走 query 参数
-    ok = await asyncio.to_thread(history.delete_repo, qid, full_name)
+    # 单删一次搜索里的一个仓库，full_name 带斜杠走 query 参数
+    ok = await asyncio.to_thread(history.delete_repo_from_run, qid, full_name)
     if not ok:
         return JSONResponse({"error": "历史不存在"}, status_code=404)
     return {"status": "ok"}
@@ -189,29 +189,29 @@ async def history_delete_process(qid: int) -> dict:
 
 @app.delete("/history/{qid}")
 async def history_delete(qid: int) -> dict:
-    # 删掉一整条历史
-    await asyncio.to_thread(history.delete_query, qid)
+    # 删掉一整次搜索（仓库账本不动）
+    await asyncio.to_thread(history.delete_run, qid)
     return {"status": "ok"}
 
 
 @app.delete("/history")
 async def history_clear() -> dict:
-    # 清空所有历史
-    await asyncio.to_thread(history.clear_all)
+    # 清空所有搜索流水账（仓库账本不动，各清各的）
+    await asyncio.to_thread(history.clear_runs)
     return {"status": "ok"}
 
 
 @app.get("/memory")
 async def memory_list() -> dict:
-    # 列出所有仓库记忆的摘要，列表页用，不取大块的 dissection
-    items = await asyncio.to_thread(memory.list_memories)
+    # 列出仓库账本所有仓库的摘要，列表页用，不取大块的 dissection
+    items = await asyncio.to_thread(history.list_memories)
     return {"items": items}
 
 
 @app.get("/memory/repo")
 async def memory_get(full_name: str):
-    # 取一条完整记忆，点开详情用。full_name 带斜杠走 query 参数，不存在回 404
-    item = await asyncio.to_thread(memory.get_memory, full_name)
+    # 取一条完整仓库记忆（含 seen_runs 时间线），点开详情用。full_name 带斜杠走 query 参数，不存在回 404
+    item = await asyncio.to_thread(history.get_memory, full_name)
     if item is None:
         return JSONResponse({"error": "记忆不存在"}, status_code=404)
     return item
@@ -219,15 +219,15 @@ async def memory_get(full_name: str):
 
 @app.delete("/memory/repo")
 async def memory_delete(full_name: str) -> dict:
-    # 删掉一条记忆，full_name 带斜杠走 query 参数
-    await asyncio.to_thread(memory.delete_memory, full_name)
+    # 删掉一条仓库记忆，full_name 带斜杠走 query 参数
+    await asyncio.to_thread(history.delete_memory, full_name)
     return {"status": "ok"}
 
 
 @app.delete("/memory")
 async def memory_clear() -> dict:
-    # 清空所有记忆
-    await asyncio.to_thread(memory.clear_all)
+    # 清空仓库账本（搜索流水账不动）
+    await asyncio.to_thread(history.clear_repos)
     return {"status": "ok"}
 
 
@@ -322,13 +322,14 @@ async def chat_dev_audit_clear() -> dict:
 async def chat_dev_snapshot(sid: str) -> dict:
     # 面板打开时拉一份现状：已记录的中间过程 + 当前笔记 + 本会话提取出的记忆 + 全局通用记忆
     records = dev.snapshot(sid)
-    note = await asyncio.to_thread(memory.get_notes, sid)
+    note_text = await asyncio.to_thread(memory.get_notes, sid)
     session_mem = await asyncio.to_thread(memory.list_by_session, sid)
     general_mem = await asyncio.to_thread(memory.list_general)
     return {
         "enabled": dev.is_enabled(),
         "records": records,
-        "note": note,
+        # 包成 {notes: 正文}，前端 renderDevState 读的是 snap.note.notes
+        "note": {"notes": note_text},
         "session_memories": session_mem,
         "general_memories": general_mem,
     }

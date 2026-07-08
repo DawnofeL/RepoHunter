@@ -5,10 +5,41 @@
 
   // 本次会话状态：凭证 + 运行时各阶段数据，刷新即清，不落盘
   const state = {
-    creds: { apikey: "", pat: "", model: "" },
+    creds: { apikey: "", pat: "", model: "", models: {} },
     params: null,
   };
   const run = {};
+
+  // 六个用模型的阶段：后端 MODELS 的键 → 凭证页对应输入框 id
+  const STAGE_INPUTS = [
+    ["query_understanding", "in-m-qu"],
+    ["keypoint_understanding", "in-m-kp"],
+    ["content_filter", "in-m-cf"],
+    ["chat", "in-m-chat"],
+    ["recall", "in-m-recall"],
+    ["extract", "in-m-extract"],
+  ];
+
+  // 从凭证页六个框收集分阶段模型，只留填了值的，空的不进去（让后端回退默认）
+  function collectStageModels() {
+    const m = {};
+    STAGE_INPUTS.forEach(([key, id]) => {
+      const v = ($(id)?.value || "").trim();
+      if (v) m[key] = v;
+    });
+    return m;
+  }
+
+  // 组装发给后端的完整六键 models：每键优先用分阶段设的，留空回退凭证页全局模型；
+  // overrides 给对话齿轮临时覆盖某几档用
+  function buildModels(overrides) {
+    const base = state.creds.model || "";
+    const cfg = state.creds.models || {};
+    const out = {};
+    STAGE_INPUTS.forEach(([key]) => { out[key] = cfg[key] || base; });
+    if (overrides) Object.assign(out, overrides);
+    return out;
+  }
 
   // 右栏对话：注入的 repo 全名（跟 ws-ctx 芯片同步）和多轮对话历史，刷新即清
   const wsContext = [];
@@ -17,6 +48,8 @@
   let wsSessionId = null;
   // 一次只允许一条在途请求，发送中禁掉发送钮，避免叠流
   let wsSending = false;
+  // 最近一轮发给模型的完整提示词（分段 + 消息），点 agent 头像的提示词监控用；每轮 prompt 事件覆盖
+  let wsLastPrompt = null;
   // 齿轮里单独设的对话 api/model，只覆盖对话；留空则回退凭证页的 state.creds
   const chatOverride = { apikey: "", model: "" };
 
@@ -25,12 +58,6 @@
   let lastRepoPane = "search";
   // 最近一次加载的会话列表，切换语言或重渲染时用，不用每次都重新 fetch
   let lastSessions = [];
-
-  // 当前打开的历史详情完整数据，单删 repo 时拿它的 id 调接口、本地改它再重渲染
-  let detailEntry = null;
-
-  // 当前打开的记忆详情完整数据，删记忆时拿它的 full_name 调接口
-  let memEntry = null;
 
   // 当前视图名和历史记录数，一起决定 HUD 历史按钮显不显示
   let currentView = "setup";
@@ -46,12 +73,29 @@
       "hud.sub": "GitHub 仓库发现 · 深度排序",
       "hud.history": "历史",
       "hud.memory": "项目记忆",
+      "hud.vault": "记忆库",
+      "hud.tosearch": "搜索",
+      "vault.runs": "搜索记录",
+      "vault.hall": "仓库记忆",
+      "vault.back": "返回大厅",
+      "vault.jump": "查看拆解",
+      "vault.timeline": "被搜到的记录",
+      "vault.runGone": "那次搜索记录已删除，看不了轨迹了",
+      "vault.noTrace": "这次没有留下轨迹",
       "setup.step": "第 01 步 · 凭证",
       "setup.title": "访问凭证",
       "setup.apikey": "DeepSeek API 密钥",
       "setup.model": "模型",
+      "setup.stages": "分阶段模型（可选）",
+      "setup.stage.ph": "留空用上面的模型",
+      "setup.stage.qu": "需求理解",
+      "setup.stage.kp": "关键点编译",
+      "setup.stage.cf": "搜索深挖",
+      "setup.stage.chat": "对话回答",
+      "setup.stage.recall": "记忆召回",
+      "setup.stage.extract": "记忆提取",
       "setup.pat": "GitHub PAT",
-      "setup.getpat": "去申请 ↗",
+      "setup.getpat": "去申请",
       "setup.pathint": "搜索 GitHub 仓库需要它。",
       "setup.enter": "进入",
       "form.step": "第 02 步 · 需求",
@@ -72,12 +116,12 @@
       "form.usemem": "启用项目记忆",
       "form.usemem.sub": "复用分析过的仓库，跳过重复拆解",
       "form.search": "搜索",
-      "run.stage.qu": "意图理解",
+      "run.stage.qu": "QU",
       "run.stage.search": "检索",
-      "run.stage.gate": "初筛",
+      "run.stage.gate": "Coarse Filter",
       "run.stage.content": "Content Filter",
       "run.stage.judge": "判分",
-      "run.stage.debate": "辩论裁决",
+      "run.stage.debate": "Debate & Adjudicate",
       "run.content.title": "Content Filter",
       "run.trace.head": "探查日志",
       "ctable.repo": "仓库",
@@ -90,7 +134,7 @@
       "ctable.judging": "判定中",
       "results.step": "第 03 步 · 排序",
       "results.title": "排序结果",
-      "results.restart": "↺ 新搜索",
+      "results.restart": "新搜索",
       "hist.step": "历史",
       "hist.title": "查询历史",
       "hist.sub": "过往查询存在本地，重启后仍在，只有你删除时才会移除。",
@@ -178,6 +222,9 @@
       "confirm.remrepo.msg.post": " 从这条历史中移除？",
       "ws.tab.repo": "结果",
       "ws.tab.chat": "会话",
+      "ws.tab.mem": "记忆",
+      "ws.mem.search": "搜索仓库记忆…",
+      "ws.mem.nomatch": "没匹配到",
       "ws.newchat": "+ 新对话",
       "sess.empty": "还没有会话，点上面开始新对话",
       "sess.ctx.pin": "置顶",
@@ -202,12 +249,29 @@
       "hud.sub": "GitHub Repo Discovery · Deep Ranking",
       "hud.history": "History",
       "hud.memory": "Repo Memory",
+      "hud.vault": "Memory",
+      "hud.tosearch": "Search",
+      "vault.runs": "Search Records",
+      "vault.hall": "Repo Memory",
+      "vault.back": "Back to Hall",
+      "vault.jump": "View",
+      "vault.timeline": "Search Timeline",
+      "vault.runGone": "That search record was deleted, trajectory unavailable",
+      "vault.noTrace": "No trajectory recorded for this run",
       "setup.step": "Step 01 · Credentials",
       "setup.title": "Access Credentials",
       "setup.apikey": "DeepSeek API Key",
       "setup.model": "Model",
+      "setup.stages": "Per-stage models (optional)",
+      "setup.stage.ph": "Leave blank to use the model above",
+      "setup.stage.qu": "Query Understanding",
+      "setup.stage.kp": "Keypoint Compile",
+      "setup.stage.cf": "Deep Dive",
+      "setup.stage.chat": "Chat",
+      "setup.stage.recall": "Recall",
+      "setup.stage.extract": "Extract",
       "setup.pat": "GitHub PAT",
-      "setup.getpat": "Get one ↗",
+      "setup.getpat": "Get one",
       "setup.pathint": "Needed for searching Github Repos.",
       "setup.enter": "Enter",
       "form.step": "Step 02 · Query",
@@ -228,12 +292,12 @@
       "form.usemem": "Use Repo Memory",
       "form.usemem.sub": "reuse analysed repos, skip re-dissecting",
       "form.search": "Search",
-      "run.stage.qu": "Translate",
+      "run.stage.qu": "QU",
       "run.stage.search": "Search",
-      "run.stage.gate": "Gate",
+      "run.stage.gate": "Coarse Filter",
       "run.stage.content": "Deep Dive",
       "run.stage.judge": "Judge",
-      "run.stage.debate": "Debate",
+      "run.stage.debate": "Debate & Adjudicate",
       "run.content.title": "Deep Dive",
       "run.trace.head": "EXPLORE TRACE",
       "ctable.repo": "Repo",
@@ -246,7 +310,7 @@
       "ctable.judging": "Judging",
       "results.step": "Step 03 · Ranked",
       "results.title": "Ranked Results",
-      "results.restart": "↺ New Search",
+      "results.restart": "New Search",
       "hist.step": "History",
       "hist.title": "Query History",
       "hist.sub": "Past queries are stored locally, kept across restarts, removed only when you delete them.",
@@ -334,6 +398,9 @@
       "confirm.remrepo.msg.post": " from this history?",
       "ws.tab.repo": "Results",
       "ws.tab.chat": "Chats",
+      "ws.tab.mem": "Memory",
+      "ws.mem.search": "Search repo memory…",
+      "ws.mem.nomatch": "No match",
       "ws.newchat": "+ New Chat",
       "sess.empty": "No chats yet — start one above",
       "sess.ctx.pin": "Pin",
@@ -381,16 +448,16 @@
       if (run.contentTotal != null) {
         $("results-sub").textContent = t("results.sub.pre") + run.contentTotal + t("results.sub.post");
       }
-    } else if (currentView === "history") {
-      renderHistoryList();
-    } else if (currentView === "history-detail" && detailEntry) {
-      renderDetail();
-    } else if (currentView === "memory") {
-      renderMemoryList();
+    } else if (currentView === "vault") {
+      renderVaultRuns();
+      renderVaultHall();
+      // 右栏正看着某个仓库详情就原地重渲染（标题、时间线文案跟着切语言），否则重置大厅标题
+      if (!$("vault-detail").hidden && vaultRepoEntry) vaultRenderRepoDetail(vaultRepoEntry);
+      else $("vault-right-title").textContent = t("vault.hall");
     } else if (currentView === "workspace" && leftTab === "chat") {
       renderSessions();
-    } else if (currentView === "memory-detail" && memEntry) {
-      renderMemDetail();
+    } else if (currentView === "workspace" && leftTab === "mem") {
+      renderWsMemory();
     }
     // 右栏对话的空态占位是 JS 拼的，跟 currentView/leftTab 无关，工作台里只要还空着就刷一遍
     if (currentView === "workspace") {
@@ -446,8 +513,7 @@
 
   // ── 视图切换 ──────────────────────────────────
   const STAGE_LABEL = { setup: "SETUP", form: "QUERY", run: "RUNNING", results: "RANKED",
-                        history: "HISTORY", "history-detail": "HISTORY",
-                        memory: "MEMORY", "memory-detail": "MEMORY", workspace: "WORKSPACE" };
+                        vault: "VAULT", workspace: "WORKSPACE" };
 
   function showView(name) {
     document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
@@ -459,8 +525,7 @@
     window.scrollTo(0, 0);
     if (suppressPush) return;
     // 进浏览器历史。results 用 replace 顶掉跑动中的 run 那格，免得前进栈里残留半截搜索页
-    const st = { view: name, id: name === "history-detail" && detailEntry ? detailEntry.id : null,
-                 fn: name === "memory-detail" && memEntry ? memEntry.full_name : null };
+    const st = { view: name };
     if (name === "results") history.replaceState(st, "");
     else history.pushState(st, "");
   }
@@ -468,33 +533,13 @@
   // 侧键/浏览器前进后退落到某条记录，按记录里的视图名还原，缺数据就退到最近的可用页
   async function restoreView(st) {
     let name = (st && st.view) || "setup";
-    if (name === "history-detail") {
-      if (st.id == null) {
-        name = "history";
-      } else if (!detailEntry || detailEntry.id !== st.id) {
-        try {
-          const res = await fetch("/history/" + st.id);
-          if (res.ok) detailEntry = await res.json();
-          else name = "history";
-        } catch (e) {
-          name = "history";
-        }
-      }
-      if (name === "history-detail") renderDetail();
-    }
-    if (name === "memory-detail") {
-      if (st.fn == null) {
-        name = "memory";
-      } else if (!memEntry || memEntry.full_name !== st.fn) {
-        try {
-          const res = await fetch("/memory/repo?full_name=" + encodeURIComponent(st.fn));
-          if (res.ok) memEntry = await res.json();
-          else name = "memory";
-        } catch (e) {
-          name = "memory";
-        }
-      }
-      if (name === "memory-detail") renderMemDetail();
+    // 浏览器前进后退落回 vault：现拉现渲染两栏，落大厅态（不还原到具体某个仓库详情）
+    if (name === "vault") {
+      await loadVaultRuns();
+      await loadVaultHall();
+      renderVaultRuns();
+      renderVaultHall();
+      vaultShowHall();
     }
     // 旧的 form/run/results 都并进 workspace：有结果还原结果态，还在搜就还原进度态，
     // 都没有才回搜索输入态。SSE 请求本身不受视图切换影响，还在后台跑，还原进度页能接着看
@@ -515,15 +560,10 @@
   }
   window.addEventListener("popstate", (e) => restoreView(e.state));
 
-  // 停在凭证页（还没接入）一律不给看历史，免得从历史返回绕过凭证；进了且有记录才显示
+  // 停在凭证页一律不给看，免得绕过凭证。不在 vault 里显示「记忆库」入口，在 vault 里显示「返回搜索」
   function updateHistoryBtn() {
-    $("history-count").textContent = historyCount;
-    $("memory-count").textContent = memoryCount;
-    // setup 页没凭证不给看，已经在自己那类页里了也不用再显示自己这个入口
-    const inHistory = currentView === "history" || currentView === "history-detail";
-    const inMemory = currentView === "memory" || currentView === "memory-detail";
-    $("btn-history").hidden = currentView === "setup" || inHistory || historyCount === 0;
-    $("btn-memory").hidden = currentView === "setup" || inMemory || memoryCount === 0;
+    $("btn-vault").hidden = currentView === "setup" || currentView === "vault";
+    $("btn-vault-search").hidden = currentView !== "vault";
   }
 
   function showErr(id, msg) {
@@ -542,15 +582,18 @@
       if (c.deepseek_api_key) $("in-apikey").value = c.deepseek_api_key;
       if (c.github_pat) $("in-pat").value = c.github_pat;
       if (c.model) $("in-model").value = c.model;
+      // 分阶段模型也带出来预填，没设过的框留空
+      const m = c.models || {};
+      STAGE_INPUTS.forEach(([key, id]) => { if (m[key]) $(id).value = m[key]; });
     } catch (e) {}
   }
 
-  // 进入时把这次的 api/pat/模型存到本地，改了就覆盖，下次自动带出来。不挡进入
-  function saveCreds(apikey, pat, model) {
+  // 进入时把这次的 api/pat/模型（含分阶段）存到本地，改了就覆盖，下次自动带出来。不挡进入
+  function saveCreds(apikey, pat, model, models) {
     fetch("/creds", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deepseek_api_key: apikey, github_pat: pat, model: model }),
+      body: JSON.stringify({ deepseek_api_key: apikey, github_pat: pat, model: model, models: models || {} }),
     }).catch(() => {});
   }
 
@@ -563,8 +606,9 @@
       return;
     }
     showErr("setup-err", "");
-    state.creds = { apikey, pat, model };
-    saveCreds(apikey, pat, model);
+    const models = collectStageModels();
+    state.creds = { apikey, pat, model, models };
+    saveCreds(apikey, pat, model, models);
     // 凭证进来直接进双栏，左栏显示搜索输入态（进来就能搜也能聊）
     showWsPane("search");
     showView("workspace");
@@ -645,13 +689,11 @@
     const keypoints = Array.from(kpList.querySelectorAll(".kp-inp"))
       .map((i) => i.value.trim())
       .filter(Boolean);
-    // 模型在凭证页填一个，两阶段统一用它；留空则后端走 config 默认（全 pro）
-    const model = state.creds.model || "";
     return {
       deepseek_api_key: state.creds.apikey,
       github_pat: state.creds.pat,
-      qu_model: model,
-      content_model: model,
+      // 六键模型：分阶段设了用分阶段的，留空回退凭证页全局模型
+      models: buildModels(),
       keypoints: keypoints,
       languages: languages,
       output_language: lang === "en" ? "English" : "简体中文",
@@ -694,13 +736,22 @@
     document.querySelectorAll(".ws-tab").forEach((el) => {
       el.classList.toggle("active", el.dataset.tab === tab);
     });
+    const repoPanes = ["ws-search", "ws-progress", "ws-list"];
     if (tab === "chat") {
-      ["ws-search", "ws-progress", "ws-list"].forEach((id) => { $(id).hidden = true; });
+      repoPanes.forEach((id) => { $(id).hidden = true; });
+      $("ws-mem").hidden = true;
       $("ws-sessions").hidden = false;
       $("ws").classList.remove("expanded");
       loadSessions();
+    } else if (tab === "mem") {
+      repoPanes.forEach((id) => { $(id).hidden = true; });
+      $("ws-sessions").hidden = true;
+      $("ws-mem").hidden = false;
+      $("ws").classList.remove("expanded");
+      openWsMemory();
     } else {
       $("ws-sessions").hidden = true;
+      $("ws-mem").hidden = true;
       showWsPane(lastRepoPane);
     }
   }
@@ -742,13 +793,15 @@
 
   // 纯 DOM：往上下文条加一枚芯片，不碰 wsContext 数组。injectCtx（加新的）和
   // renderCtxChips（从已有数组整排重建，比如切回一个旧会话）分别调它
-  function addCtxChip(name) {
+  function addCtxChip(name, recalled) {
     const box = $("ws-ctx");
     box.querySelector(".ws-ctx-empty")?.remove();
     const chip = document.createElement("span");
-    chip.className = "ws-ctx-chip";
+    chip.className = "ws-ctx-chip" + (recalled ? " ws-ctx-recalled" : "");
     chip.dataset.ctx = name;
-    chip.innerHTML = esc(name.split("/").pop()) + ' <button title="' + esc(t("form.langrow.del")) + '">×</button>';
+    // 召回转正的芯片带个「召回」小标，标明是系统帮着捞进来的，不是用户手点的
+    chip.innerHTML = (recalled ? '<span class="ws-ctx-tag">召回</span> ' : "") +
+      esc(name.split("/").pop()) + ' <button title="' + esc(t("form.langrow.del")) + '">×</button>';
     chip.querySelector("button").addEventListener("click", () => {
       chip.remove();
       const i = wsContext.indexOf(name);
@@ -756,16 +809,19 @@
       if (!box.querySelector(".ws-ctx-chip")) {
         box.innerHTML = '<span class="ws-ctx-empty">' + esc(t("ws.ctx.empty")) + "</span>";
       }
+      // 记忆 tab 里对应的卡同步取消绿标（那卡是「已注入」态，这里移除了就不该再标注）
+      document.querySelector('.ws-mem-list .hist-card[data-fn="' + CSS.escape(name) + '"]')
+        ?.classList.remove("injected");
     });
     box.appendChild(chip);
   }
 
   // 上下文芯片：加一个（去重）/ 点 ✕ 移除；空了显示占位。wsContext 数组跟芯片同步，发消息时带给后端
-  function injectCtx(name) {
+  function injectCtx(name, recalled) {
     const box = $("ws-ctx");
     if (box.querySelector('[data-ctx="' + CSS.escape(name) + '"]')) return;
     wsContext.push(name);
-    addCtxChip(name);
+    addCtxChip(name, recalled);
   }
 
   // 从 wsContext 数组整排重建芯片（不改数组），切换会话时用：先清空框再逐个补
@@ -775,6 +831,43 @@
     wsContext.forEach(addCtxChip);
   }
 
+  // ── 左栏「记忆」tab：仓库记忆列表 + 模糊搜索，点卡注入对话上下文 ──────────
+  // 进 tab 时拉一次 /memory 存本地，搜索是纯本地过滤不重新请求
+  let wsMemItems = [];
+
+  async function openWsMemory() {
+    wsMemItems = await loadMemory();
+    renderWsMemory();
+  }
+
+  // 按搜索框内容模糊过滤（全名/描述/tags 任一含关键词），渲染记忆卡，点卡注入上下文。
+  // 已在上下文里的卡标成 injected，一眼看出注了哪些
+  function renderWsMemory() {
+    const q = ($("ws-mem-search").value || "").trim().toLowerCase();
+    const items = q
+      ? wsMemItems.filter((m) => {
+          const hay = (m.full_name + " " + (m.description || "") + " " + (m.tags || []).join(" ")).toLowerCase();
+          return hay.includes(q);
+        })
+      : wsMemItems;
+    const list = $("ws-mem-list");
+    if (!items.length) {
+      list.innerHTML = '<div class="history-empty">' + esc(q ? t("ws.mem.nomatch") : t("mem.none")) + "</div>";
+      return;
+    }
+    list.innerHTML = items.map(memCardHTML).join("");
+    Array.from(list.querySelectorAll(".hist-card")).forEach((card) => {
+      const fn = card.dataset.fn;
+      if (wsContext.includes(fn)) card.classList.add("injected");
+      card.addEventListener("click", () => {
+        injectCtx(fn);
+        card.classList.add("injected");
+      });
+    });
+  }
+
+  $("ws-mem-search")?.addEventListener("input", renderWsMemory);
+
   // ── 右栏对话 ──────────────────────────────────
   // 往聊天区加一个气泡，返回气泡里放文本的节点，流式时往它 append 文字。role 决定左右对齐样式
   function appendBubble(role, text) {
@@ -783,6 +876,17 @@
     $("ws-chat-empty")?.remove();
     const wrap = document.createElement("div");
     wrap.className = "ws-msg ws-msg-" + role;
+    // assistant 气泡挂一个可点头像，点它弹出这轮发给模型的提示词（分色）。挂在 wrap 上的
+    // _prompt 属性由 sendChat 收到 prompt 事件时填，没填就提示这轮没记录到
+    if (role === "assistant") {
+      const av = document.createElement("button");
+      av.type = "button";
+      av.className = "ws-avatar";
+      av.title = "查看这轮发给模型的提示词";
+      av.textContent = "🍃";
+      av.addEventListener("click", () => openPromptInspector(wrap._prompt || null));
+      wrap.appendChild(av);
+    }
     const body = document.createElement("div");
     body.className = "ws-bubble";
     body.textContent = text || "";
@@ -790,6 +894,87 @@
     chat.appendChild(wrap);
     chat.scrollTop = chat.scrollHeight;
     return body;
+  }
+
+  // 召回判断可视化：点头像时插在 user 消息之后，展示这轮小模型看了用户的话从候选里挑了什么。
+  // r 是 recall_debug 段的 recall 数据；没跑召回或被跳过门拦下就说明原因
+  function renderRecallInspect(r) {
+    if (!r) return "";
+    const tag = '<div class="pi-rc-tag">小模型提示词 + 输出（挑仓库用，区别于上面主模型）</div>';
+    if (!r.fired) {
+      return '<div class="pi-block pi-recall pi-rc-inspect">' + tag +
+        '<div class="pi-rc-skip">这轮没跑召回：' + esc(r.reason || "") + "</div></div>";
+    }
+    const chips = (arr, cls) => (arr && arr.length)
+      ? arr.map((x) => '<span class="pi-rc ' + cls + '">' + esc(x) + "</span>").join("")
+      : '<span class="pi-rc-none">无</span>';
+    const p = r.prompt || [];
+    const sysText = (p.find((m) => m.role === "system") || {}).content || "";
+    const userText = (p.find((m) => m.role === "user") || {}).content || "";
+    // 提示词和回答直接打印（不折叠），跟主模型一样能看全文，只是框小字小、能滚动
+    const sub = (label, text) => text
+      ? '<div class="pi-rc-sublabel">' + esc(label) + '</div><pre class="pi-rc-pre">' + esc(text) + "</pre>"
+      : "";
+    return '<div class="pi-block pi-recall pi-rc-inspect">' + tag +
+      '<div class="pi-rc-row">从 <b>' + ((r.manifest || []).length) + "</b> 条候选里挑：" +
+      "命中仓库 " + chips(r.hit_repos, "pi-rc-hit") +
+      "　命中记忆 " + chips(r.hit_memories, "pi-rc-hit") +
+      "　分不清·会反问 " + chips(r.ambiguous, "pi-rc-amb") + "</div>" +
+      sub("提示词注入 · system（挑选规则）", sysText) +
+      sub("提示词注入 · user（候选清单 + 最近对话）", userText) +
+      (r.raw
+        ? '<div class="pi-rc-sublabel pi-rc-anslabel">小模型的回答（它最终挑的结果）</div>' +
+          '<pre class="pi-rc-pre pi-rc-answer">' + esc(r.raw) + "</pre>"
+        : "") +
+      "</div>";
+  }
+
+  // 提示词监控：点 agent 头像弹出这轮发给模型的完整提示词，按板块分色（人设、每个注入仓库、
+  // user、assistant 各一色）。ev 是后端的 prompt 事件 {segments, messages}，没有就提示没记录到
+  function openPromptInspector(ev) {
+    document.querySelector(".pi-overlay")?.remove();
+    const ov = document.createElement("div");
+    ov.className = "pi-overlay";
+    let body;
+    if (!ev) {
+      body = '<div class="pi-empty">这轮没有记录到提示词。打开页面后聊的那几轮才有。</div>';
+    } else {
+      // 这轮历史被压过就在顶部标一条，让人知道下面的 messages 是压缩后注入模型的样子、原文在会话记录里
+      const pathName = { note_replace: "笔记顶替", summary_fallback: "摘要兜底",
+        hard_truncate_circuit: "熔断硬截断", hard_truncate_failed: "摘要失败·硬截断",
+        reactive_truncate: "模型拒绝后硬截" }[ev.compact_path] || ev.compact_path;
+      const compactNote = ev.compacted
+        ? '<div class="pi-compacted">本轮历史已压缩（' + esc(pathName) +
+          "）：下面是压缩后注入模型的内容，完整对话在会话记录里</div>"
+        : "";
+      const kindCls = { persona: "pi-persona", memory: "pi-memory", repo: "pi-repo",
+        recall_memory: "pi-recall", recall_hint: "pi-recall" };
+      const allSegs = ev.segments || [];
+      // 召回判断段单独拎出来，不当普通提示词段渲染，末尾插在 user 消息之后
+      const recallDbg = allSegs.find((s) => s.kind === "recall_debug");
+      const seg = allSegs.filter((s) => s.kind !== "recall_debug").map((s) => {
+        const cls = kindCls[s.kind] || "pi-repo";
+        // 召回补进来的仓库段挂个「召回」小标，跟用户手动「+」注入的区分开
+        const tag = s.recalled ? ' <span class="pi-recall-tag">召回</span>' : "";
+        return '<div class="pi-block ' + cls + (s.recalled ? " pi-recalled" : "") +
+          '"><div class="pi-label">' + esc(s.label) + tag +
+          "</div><pre>" + esc(s.text) + "</pre></div>";
+      }).join("");
+      const msg = (ev.messages || []).map((m) => {
+        const cls = m.role === "user" ? "pi-user" : "pi-assistant";
+        return '<div class="pi-block ' + cls + '"><div class="pi-label">' + esc(m.role) +
+          "</div><pre>" + esc(m.content) + "</pre></div>";
+      }).join("");
+      body = compactNote + seg + msg + renderRecallInspect(recallDbg && recallDbg.recall);
+    }
+    ov.innerHTML =
+      '<div class="pi-box"><div class="pi-head"><span>上一轮发给模型的提示词</span>' +
+      '<button class="pi-close" type="button">×</button></div>' +
+      '<div class="pi-body">' + body + "</div></div>";
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.querySelector(".pi-close").addEventListener("click", close);
+    ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
   }
 
   // 发一条消息：读输入框 + wsContext，POST /chat，SSE 逐 delta 追加进 AI 气泡
@@ -801,9 +986,13 @@
     input.value = "";
     input.style.height = "auto";
 
-    // 第一条消息时给这次对话生成一个 session id，标题拿它当占位，后面每轮都存进同一行
+    // 第一条消息时给这次对话生成一个 session id，用创建时间戳（YYYYMMDD-HHMMSS），
+    // 一眼看出啥时候开的、也能排序；后面每轮都存进同一行
     if (!wsSessionId) {
-      wsSessionId = "s_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, "0");
+      wsSessionId = "" + d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) +
+        "-" + p(d.getHours()) + p(d.getMinutes()) + p(d.getSeconds());
     }
 
     // 用户气泡先上屏，存进多轮历史
@@ -815,6 +1004,8 @@
     $("ws-send").disabled = true;
     const bubble = appendBubble("assistant", "");
     bubble.classList.add("streaming");
+    // 这轮 AI 气泡的外层，收到 prompt 事件就把提示词挂它身上，点头像时读
+    const bubbleWrap = bubble.parentElement;
     let acc = "";
     // 后端这轮若压缩了历史，会 yield compacted 事件带来压缩后的数组，先存这，finally 里替换
     let pendingCompact = null;
@@ -826,8 +1017,10 @@
         body: JSON.stringify({
           // 齿轮设了就用齿轮的，没设回退凭证页；只影响对话
           deepseek_api_key: chatOverride.apikey || state.creds.apikey,
-          model: chatOverride.model || state.creds.model || "",
-          messages: wsMessages,
+          // 六键模型，齿轮的对话模型只覆盖对话回答（chat）那档，召回/提取仍用凭证页配置
+          models: buildModels(chatOverride.model ? { chat: chatOverride.model } : null),
+          // 只把 role/content 发给模型，挂在消息上的提示词分段是本地存的、不发（发了没用还占 token）
+          messages: wsMessages.map((m) => ({ role: m.role, content: m.content })),
           context: wsContext,
           // 带上会话 id，后端聊完按它触发提取记忆
           session_id: wsSessionId,
@@ -850,7 +1043,14 @@
           if (!line) continue;
           let ev;
           try { ev = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
-          if (ev.type === "delta") {
+          if (ev.type === "prompt") {
+            // 这轮完整提示词（分段 + 消息）：存最近一次，也挂到这轮气泡头像上
+            wsLastPrompt = ev;
+            if (bubbleWrap) bubbleWrap._prompt = ev;
+          } else if (ev.type === "recall") {
+            // 召回帮着捞进来的仓库，转正成右栏芯片，往后每轮常驻（跟点过「+」一样，用户可随手删）
+            (ev.repos || []).forEach((r) => injectCtx(r, true));
+          } else if (ev.type === "delta") {
             acc += ev.text || "";
             bubble.textContent = acc;
             $("ws-chat").scrollTop = $("ws-chat").scrollHeight;
@@ -869,8 +1069,12 @@
       bubble.classList.add("error");
     } finally {
       bubble.classList.remove("streaming");
-      // 空回复（比如一上来就报错）不入历史，免得脏了后续多轮
-      if (acc) wsMessages.push({ role: "assistant", content: acc });
+      // 空回复（比如一上来就报错）不入历史，免得脏了后续多轮。把这轮的提示词分段挂在 assistant
+      // 这条上一起存进会话，退出重进点头像还能看（含召回判断）；发给模型时上面会剥掉、只发 role/content
+      if (acc) {
+        const seg = (bubbleWrap && bubbleWrap._prompt) ? bubbleWrap._prompt.segments : null;
+        wsMessages.push({ role: "assistant", content: acc, prompt: seg ? { segments: seg } : null });
+      }
       wsSending = false;
       $("ws-send").disabled = false;
       input.focus();
@@ -919,7 +1123,13 @@
   function renderChatFromMessages() {
     const chat = $("ws-chat");
     chat.innerHTML = wsMessages.length ? "" : wsChatEmptyHTML();
-    wsMessages.forEach((m) => appendBubble(m.role, m.content));
+    wsMessages.forEach((m) => {
+      const body = appendBubble(m.role, m.content);
+      // 还原 assistant 气泡时把存下的提示词分段挂回头像，点开还能看这轮发了什么（含召回判断）
+      if (m.role === "assistant" && m.prompt && body.parentElement) {
+        body.parentElement._prompt = m.prompt;
+      }
+    });
     chat.scrollTop = chat.scrollHeight;
   }
 
@@ -1277,15 +1487,15 @@
     setStageActive("search");
   }
 
-  // 编译出的判定标准回显：每条 keypoint 一行「原文 → 标准」，让用户看到系统怎么理解需求。
-  // 标准空的（编译失败降级）不显示箭头和标准，只显示原文
+  // 编译出的判定标准回显：每条 keypoint 一行「原文：标准」，让用户看到系统怎么理解需求。
+  // 标准空的（编译失败降级）不显示分隔符和标准，只显示原文
   function onKeypointsCompiled(ev) {
     const box = $("kp-std-box");
     if (!box) return;
     const rows = (ev.compiled || []).map((c) => {
       const kp = '<span class="kp-std-kp">' + esc(c.keypoint) + "</span>";
       const std = c.standard
-        ? '<span class="kp-std-arrow">→</span><span class="kp-std-txt">' + esc(c.standard) + "</span>"
+        ? '<span class="kp-std-arrow">：</span><span class="kp-std-txt">' + esc(c.standard) + "</span>"
         : "";
       return '<div class="kp-std-row">' + kp + std + "</div>";
     });
@@ -1314,7 +1524,7 @@
     if (run.contentRowEls[fn]) return run.contentRowEls[fn];
     const tr = document.createElement("tr");
     tr.innerHTML =
-      '<td class="c-name"><span class="c-caret">▸</span>' +
+      '<td class="c-name"><span class="c-caret">+</span>' +
         '<span class="c-repo">' + esc(fn) + "</span></td>" +
       '<td class="c-status"><span class="cdot"></span><span class="c-phase"></span><span class="c-skip-tag"></span></td>' +
       '<td class="c-mono c-round">0</td>' +
@@ -1333,7 +1543,7 @@
     tr.querySelector(".c-name").addEventListener("click", () => {
       const open = logtr.style.display !== "none";
       logtr.style.display = open ? "none" : "";
-      tr.querySelector(".c-caret").textContent = open ? "▸" : "▾";
+      tr.querySelector(".c-caret").textContent = open ? "+" : "−";
     });
 
     run.contentRowEls[fn] = tr;
@@ -1444,11 +1654,11 @@
     // 跳过的卡展开只放 github 链接和跳过原因，正常卡照旧放整份拆解
     const body = skipped
       ? '<a class="repo-link" href="https://github.com/' + esc(r.full_name) +
-          '" target="_blank" rel="noopener">github.com/' + esc(r.full_name) + " ↗</a>" +
+          '" target="_blank" rel="noopener">github.com/' + esc(r.full_name) + "</a>" +
         (r.reason ? '<div class="diss-sec">' + esc(t("rcard.skipreason")) + '</div><div class="diss-skip">' + esc(r.reason) + "</div>" : "")
       : (d.purpose ? '<div class="diss-lead">' + esc(d.purpose) + "</div>" : "") +
         '<a class="repo-link" href="https://github.com/' + esc(r.full_name) +
-          '" target="_blank" rel="noopener">github.com/' + esc(r.full_name) + " ↗</a>" +
+          '" target="_blank" rel="noopener">github.com/' + esc(r.full_name) + "</a>" +
         (d.tech_stack
           ? '<div class="diss-sec">' + esc(t("rcard.techstack")) + '</div><div class="diss-tech">' + esc(d.tech_stack) + "</div>"
           : "") +
@@ -1480,7 +1690,7 @@
       "<span>🌟 " + fmtStars(r.stars) + "</span>" +
       "<span>" + toMB(r.size) + "MB</span>" +
       "</span>" +
-      '<span class="rcard-caret">▶</span>' +
+      '<span class="rcard-caret"></span>' +
       (deletable ? '<button class="rcard-del" data-fn="' + esc(r.full_name) + '" title="' + esc(t("rcard.del")) + '">×</button>' : "") +
       "</div>" +
       '<div class="rcard-body"><div class="rcard-inner"><div class="rcard-content">' +
@@ -1521,16 +1731,17 @@
   // 把 cost 表渲染进任意容器，结果页和历史详情页共用。参数叫 tbl，别和翻译函数 t() 撞名
   function renderCost(area, tbl) {
     tbl = tbl || {};
-    const label = { query_understanding: t("run.stage.qu"), skip_gate: t("run.stage.gate"),
-                    content_filter: t("run.stage.content"), keypoint_judge: t("run.stage.judge"),
-                    debate: t("run.stage.debate") };
+    const label = { query_understanding: t("run.stage.qu"), keypoint_understanding: "KU",
+                    skip_gate: t("run.stage.gate"), content_filter: t("run.stage.content"),
+                    keypoint_judge: t("run.stage.judge"), debate: t("run.stage.debate") };
+    const fmt = (n) => n.toLocaleString("en-US");
     const keys = Object.keys(tbl);
     const rows = keys.map((k) => {
       const c = tbl[k];
       const hr = c.prompt ? Math.round((c.hit / c.prompt) * 100) : 0;
       return (
-        "<tr><td>" + (label[k] || k) + "</td><td>" + c.calls + "</td><td>" + c.prompt +
-        "</td><td>" + c.hit + "</td><td>" + c.miss + "</td><td>" + c.completion + "</td><td>" + hr + "%</td></tr>"
+        "<tr><td>" + (label[k] || k) + "</td><td>" + fmt(c.calls) + "</td><td>" + fmt(c.prompt) +
+        "</td><td>" + fmt(c.hit) + "</td><td>" + fmt(c.miss) + "</td><td>" + fmt(c.completion) + "</td><td>" + hr + "%</td></tr>"
       );
     });
     if (keys.length) {
@@ -1538,18 +1749,18 @@
       const P = sum("prompt");
       const H = sum("hit");
       rows.push(
-        "<tr><td>" + esc(t("cost.total")) + "</td><td>" + sum("calls") + "</td><td>" + P + "</td><td>" + H +
-        "</td><td>" + sum("miss") + "</td><td>" + sum("completion") + "</td><td>" +
+        "<tr><td>" + esc(t("cost.total")) + "</td><td>" + fmt(sum("calls")) + "</td><td>" + fmt(P) + "</td><td>" + fmt(H) +
+        "</td><td>" + fmt(sum("miss")) + "</td><td>" + fmt(sum("completion")) + "</td><td>" +
         (P ? Math.round((H / P) * 100) : 0) + "%</td></tr>"
       );
     }
     area.innerHTML =
       '<div class="cost-cap">' + esc(t("cost.cap")) + "</div>" +
-      '<table class="cost-table"><thead><tr><th>' + esc(t("cost.stage")) + "</th><th>" + esc(t("cost.calls")) +
+      '<div class="cost-table-wrap"><table class="cost-table"><thead><tr><th>' + esc(t("cost.stage")) + "</th><th>" + esc(t("cost.calls")) +
       "</th><th>" + esc(t("cost.input")) + "</th><th>" + esc(t("cost.hit")) + "</th>" +
       "<th>" + esc(t("cost.miss")) + "</th><th>" + esc(t("cost.output")) + "</th><th>" + esc(t("cost.hitrate")) + "</th></tr></thead><tbody>" +
       rows.join("") +
-      "</tbody></table>";
+      "</tbody></table></div>";
   }
 
   function onCost(ev) {
@@ -1595,82 +1806,7 @@
     updateHistoryBtn();
   }
 
-  function histCardHTML(h) {
-    const top = h.top_name || t("hist.noresults");
-    return (
-      '<div class="hist-card" data-id="' + h.id + '">' +
-      '<button class="hist-del" data-id="' + h.id + '" title="' + esc(t("confirm.delquery.title")) + '">×</button>' +
-      '<div class="hist-card-head">' +
-      '<span class="hist-time">' + fmtTime(h.ts) + "</span>" +
-      '<span class="hist-count">' + h.total + " " + esc(t("hist.repos")) + "</span>" +
-      "</div>" +
-      '<div class="hist-query">' +
-        esc(h.keypoints && h.keypoints.length ? h.keypoints.join(" · ") : (h.query || t("hist.empty"))) +
-      "</div>" +
-      '<div class="hist-meta"><span class="hist-top">' + esc(t("hist.top")) + esc(top) + "</span></div>" +
-      "</div>"
-    );
-  }
-
-  // 最近一次加载的历史列表，切换语言时拿它原地重渲染，不重新请求
-  let lastHistoryItems = [];
-
-  // 把历史卡渲染进列表并绑事件，openHistory 和切换语言时都调
-  function renderHistoryList() {
-    const items = lastHistoryItems;
-    const list = $("history-list");
-    $("btn-history-clear").hidden = items.length === 0;
-    if (!items.length) {
-      list.innerHTML = '<div class="history-empty">' + esc(t("hist.none")) + "</div>";
-      return;
-    }
-    list.innerHTML = items.map(histCardHTML).join("");
-    Array.from(list.querySelectorAll(".hist-card")).forEach((c) => {
-      c.addEventListener("click", () => openHistoryDetail(parseInt(c.dataset.id, 10)));
-    });
-    Array.from(list.querySelectorAll(".hist-del")).forEach((b) => {
-      b.addEventListener("click", (e) => {
-        e.stopPropagation();
-        deleteWholeQuery(parseInt(b.dataset.id, 10));
-      });
-    });
-  }
-
-  async function openHistory() {
-    lastHistoryItems = await loadHistory();
-    renderHistoryList();
-    showView("history");
-  }
-
-  async function deleteWholeQuery(id) {
-    // 删整条必须确认，没有不再提示
-    const r = await openConfirm({
-      title: t("confirm.delquery.title"),
-      message: t("confirm.delquery.msg"),
-      confirmLabel: t("confirm.delete"),
-      showDontAsk: false,
-    });
-    if (!r.ok) return;
-    await fetch("/history/" + id, { method: "DELETE" });
-    await openHistory();
-    refreshHistoryCount();
-  }
-
-  async function clearAllHistory() {
-    // 清空全部也必须确认
-    const r = await openConfirm({
-      title: t("confirm.clear.title"),
-      message: t("confirm.clear.msg"),
-      confirmLabel: t("confirm.clear.ok"),
-      showDontAsk: false,
-    });
-    if (!r.ok) return;
-    await fetch("/history", { method: "DELETE" });
-    await openHistory();
-    refreshHistoryCount();
-  }
-
-  // ── 项目记忆 ──────────────────────────────────
+  // ── 仓库列表（Vault 大厅复用）──────────────────
   async function loadMemory() {
     try {
       const res = await fetch("/memory");
@@ -1709,112 +1845,7 @@
     );
   }
 
-  // 最近一次加载的记忆列表，切换语言时拿它原地重渲染，不重新请求
-  let lastMemoryItems = [];
-
-  function renderMemoryList() {
-    const items = lastMemoryItems;
-    const list = $("memory-list");
-    $("btn-memory-clear").hidden = items.length === 0;
-    if (!items.length) {
-      list.innerHTML = '<div class="history-empty">' + esc(t("mem.none")) + "</div>";
-      return;
-    }
-    list.innerHTML = items.map(memCardHTML).join("");
-    Array.from(list.querySelectorAll(".hist-card")).forEach((c) => {
-      c.addEventListener("click", () => openMemDetail(c.dataset.fn));
-    });
-    Array.from(list.querySelectorAll(".hist-del")).forEach((b) => {
-      b.addEventListener("click", (e) => {
-        e.stopPropagation();
-        deleteMemory(b.dataset.fn);
-      });
-    });
-  }
-
-  async function openMemory() {
-    lastMemoryItems = await loadMemory();
-    renderMemoryList();
-    showView("memory");
-  }
-
-  async function openMemDetail(fullName) {
-    try {
-      const res = await fetch("/memory/repo?full_name=" + encodeURIComponent(fullName));
-      if (!res.ok) return;
-      memEntry = await res.json();
-    } catch (e) {
-      return;
-    }
-    renderMemDetail();
-    showView("memory-detail");
-  }
-
-  function renderMemDetail() {
-    const m = memEntry;
-    // seen_queries 是一条条需求清单，每条清单摊平成 chip，让人看这仓库被哪些需求搜到过
-    const seen = (m.seen_queries || [])
-      .map((q) => (Array.isArray(q) ? q : [q]))
-      .flat()
-      .map((x) => '<span class="qu-chip kp">' + esc(x) + "</span>")
-      .join("");
-    $("md-sub").innerHTML =
-      '<div class="hd-meta-label">' +
-        '<span class="hd-badge">' + esc(t("mem.lastseen")) + fmtTimeFull(m.last_seen) + "</span>" +
-        '<span class="hd-count">🌟 ' + fmtStars(m.stars) + " · " + toMB(m.size) + "MB · " + esc(m.language || "") + "</span>" +
-      "</div>" +
-      '<div class="hd-query-box">' + esc(m.full_name) + "</div>" +
-      (seen ? '<div class="diss-sec">' + esc(t("mem.seenq")) + '</div><div class="proc-chips">' + seen + "</div>" : "");
-    // 复用结果卡渲染：把记忆行拼成 rcardHTML 认识的形状。没拆解的当跳过卡处理
-    const skipped = !m.dissection || !Object.keys(m.dissection).length;
-    const asRepo = {
-      full_name: m.full_name, dissection: m.dissection || {}, stars: m.stars, size: m.size,
-      read_files: m.read_files || [], skipped: skipped, reason: m.skip_note || "",
-      keypoint_hits: 0, keypoint_total: 0, detail: { keypoints: [] },
-    };
-    // onDelete 传 null，记忆详情里的卡不带单删按钮（删整条走列表页的 ×）
-    renderRanked($("md-list"), [asRepo], null);
-  }
-
-  async function deleteMemory(fullName) {
-    const r = await openConfirm({
-      title: t("confirm.delmem.title"),
-      message: t("confirm.delmem.msg.pre") + fullName + t("confirm.delmem.msg.post"),
-      confirmLabel: t("confirm.delete"),
-      showDontAsk: false,
-    });
-    if (!r.ok) return;
-    await fetch("/memory/repo?full_name=" + encodeURIComponent(fullName), { method: "DELETE" });
-    await openMemory();
-    refreshMemoryCount();
-  }
-
-  async function clearAllMemory() {
-    const r = await openConfirm({
-      title: t("confirm.clearmem.title"),
-      message: t("confirm.clearmem.msg"),
-      confirmLabel: t("confirm.clearmem.ok"),
-      showDontAsk: false,
-    });
-    if (!r.ok) return;
-    await fetch("/memory", { method: "DELETE" });
-    await openMemory();
-    refreshMemoryCount();
-  }
-
-  async function openHistoryDetail(id) {
-    try {
-      const res = await fetch("/history/" + id);
-      if (!res.ok) return;
-      detailEntry = await res.json();
-    } catch (e) {
-      return;
-    }
-    renderDetail();
-    showView("history-detail");
-  }
-
-  // 结果页/历史详情共用的表头：时间 + 仓库数 + keypoint 子弹清单 + 查询词 chips
+  // 结果页/Vault 搜索记录展开共用的表头：时间 + 仓库数 + keypoint 子弹清单 + 查询词 chips
   function headerMetaHTML(ts, total, keypoints, queries) {
     const kpBullets = (keypoints || []).length
       ? '<ul class="hd-kp-list">' + keypoints.map((k) => "<li>" + esc(k) + "</li>").join("") + "</ul>"
@@ -1832,36 +1863,6 @@
       "</div>" +
       kpBullets + qChips
     );
-  }
-
-  function renderDetail() {
-    const h = detailEntry;
-    const p = h.process || {};
-    // keypoints 用独立列 h.keypoints（始终有），别用 p.keypoints（process 为 null 时会丢）；查询词只在 process 里
-    $("hd-sub").innerHTML = headerMetaHTML(h.ts, h.total, h.keypoints, p.queries);
-    renderRanked($("hd-list"), h.ranked, deleteRepoFromDetail);
-    renderCost($("hd-cost"), h.cost);
-  }
-
-  async function deleteRepoFromDetail(fullName) {
-    // 单删一个 repo，除非用户勾过「下次不再提示」，否则先弹确认
-    const skip = localStorage.getItem("rh_skip_repo_confirm") === "1";
-    if (!skip) {
-      const r = await openConfirm({
-        title: t("confirm.remrepo.title"),
-        message: t("confirm.remrepo.msg.pre") + fullName + t("confirm.remrepo.msg.post"),
-        confirmLabel: t("confirm.remove"),
-        showDontAsk: true,
-      });
-      if (!r.ok) return;
-      if (r.dontAsk) localStorage.setItem("rh_skip_repo_confirm", "1");
-    }
-    await fetch("/history/" + detailEntry.id + "/repo?full_name=" + encodeURIComponent(fullName),
-      { method: "DELETE" });
-    // 本地同步去掉这个 repo 再重渲染，跟后端改写后的状态一致
-    detailEntry.ranked = (detailEntry.ranked || []).filter((r) => r.full_name !== fullName);
-    detailEntry.total = detailEntry.ranked.length;
-    renderDetail();
   }
 
   // 通用确认弹窗，返回 Promise<{ok, dontAsk}>。showDontAsk 控制要不要露「下次不再提示」
@@ -1900,14 +1901,329 @@
     });
   }
 
-  $("btn-history").addEventListener("click", openHistory);
-  $("btn-history-back").addEventListener("click", () => history.back());
-  $("btn-hd-back").addEventListener("click", () => history.back());
-  $("btn-history-clear").addEventListener("click", clearAllHistory);
-  $("btn-memory").addEventListener("click", openMemory);
-  $("btn-memory-back").addEventListener("click", () => history.back());
-  $("btn-md-back").addEventListener("click", () => history.back());
-  $("btn-memory-clear").addEventListener("click", clearAllMemory);
+  // ── Vault：搜索记录（左）+ 仓库大厅/拆解详情（右），右栏点开详情扩宽 ──
+  // 右栏从大厅切到拆解详情：藏大厅、露详情和返回钮、加 expanded 让右栏丝滑扩宽
+  function vaultShowDetail() {
+    $("vault-hall").hidden = true;
+    $("vault-detail").hidden = false;
+    $("vault-back").hidden = false;
+    $("vault").classList.add("expanded");
+  }
+  // 收回大厅：藏详情、露大厅、去掉返回钮和 expanded，宽度复位五五开，标题回大厅名
+  function vaultShowHall() {
+    $("vault-detail").hidden = true;
+    $("vault-hall").hidden = false;
+    $("vault-back").hidden = true;
+    $("vault").classList.remove("expanded");
+    $("vault-right-title").textContent = t("vault.hall");
+  }
+
+  // 左栏搜索记录：列表摘要拿 loadHistory（/history）现成的，展开某条才拉 /history/{id} 详情
+  let vaultRuns = [];
+
+  async function loadVaultRuns() {
+    vaultRuns = await loadHistory();
+  }
+
+  // 一条搜索记录的折叠卡：时间 + 那次需求 + 命中仓库数 + 删除。展开体懒加载，先留空
+  function vaultRunCardHTML(h) {
+    return (
+      '<div class="vault-run" data-id="' + h.id + '">' +
+      '<div class="vault-run-head">' +
+      '<span class="vault-run-time">' + fmtTime(h.ts) + "</span>" +
+      '<span class="vault-run-kp">' +
+        esc(h.keypoints && h.keypoints.length ? h.keypoints.join(" · ") : (h.query || t("hist.empty"))) +
+      "</span>" +
+      '<span class="vault-run-count">' + h.total + "</span>" +
+      '<button class="hist-del vault-del" title="' + esc(t("confirm.delquery.title")) + '">×</button>' +
+      "</div>" +
+      '<div class="vault-run-body" hidden></div>' +
+      "</div>"
+    );
+  }
+
+  // 展开体里一个命中仓库的行：仓库名 + 命中数（跳过的标跳过）+ 跳转到右栏看拆解
+  function vaultRepoRowHTML(r) {
+    const hit = r.skipped
+      ? '<span class="vru-hit">' + esc(t("mem.tag.skipped")) + "</span>"
+      : '<span class="vru-hit">' + (r.keypoint_hits || 0) + "/" + (r.keypoint_total || 0) + "</span>";
+    return (
+      '<div class="vault-run-repo">' +
+      '<span class="vru-name">' + esc(r.full_name) + "</span>" +
+      hit +
+      '<button class="vru-jump" data-fn="' + esc(r.full_name) + '">' + esc(t("vault.jump")) + "</button>" +
+      "</div>"
+    );
+  }
+
+  // 填一条搜索记录的展开体：那次的元数据（keypoints/查询词）+ 命中仓库清单 + 花费明细
+  function renderVaultRunBody(bodyEl, detail) {
+    const p = detail.process || {};
+    bodyEl.innerHTML =
+      headerMetaHTML(detail.ts, detail.total, detail.keypoints, p.queries) +
+      '<div class="vault-run-repos">' + (detail.ranked || []).map(vaultRepoRowHTML).join("") + "</div>" +
+      '<div class="vault-run-cost"></div>';
+    renderCost(bodyEl.querySelector(".vault-run-cost"), detail.cost);
+    // 每个仓库的「查看拆解」跳到右栏，别冒泡去触发卡片折叠
+    Array.from(bodyEl.querySelectorAll(".vru-jump")).forEach((b) => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        vaultOpenRepo(b.dataset.fn);
+      });
+    });
+  }
+
+  // 展开/收起一条搜索记录，第一次展开才拉 /history/{id} 填展开体，之后不重复请求
+  async function vaultToggleRun(id, cardEl) {
+    const body = cardEl.querySelector(".vault-run-body");
+    const open = cardEl.classList.toggle("open");
+    body.hidden = !open;
+    if (open && !body.dataset.loaded) {
+      body.innerHTML = '<div class="history-empty">…</div>';
+      try {
+        const res = await fetch("/history/" + id);
+        if (res.ok) {
+          renderVaultRunBody(body, await res.json());
+          body.dataset.loaded = "1";
+        }
+      } catch (e) {
+        /* 拉不到就留个空展开体，下次展开再试 */
+      }
+    }
+  }
+
+  // 把搜索记录卡渲染进左栏并绑事件（点头折叠、× 删整条），openVault 和切语言时都调
+  function renderVaultRuns() {
+    const list = $("vault-runs");
+    const items = vaultRuns;
+    $("btn-vault-runs-clear").hidden = items.length === 0;
+    if (!items.length) {
+      list.innerHTML = '<div class="history-empty">' + esc(t("hist.none")) + "</div>";
+      return;
+    }
+    list.innerHTML = items.map(vaultRunCardHTML).join("");
+    Array.from(list.querySelectorAll(".vault-run")).forEach((card) => {
+      const id = parseInt(card.dataset.id, 10);
+      card.querySelector(".vault-run-head").addEventListener("click", () => vaultToggleRun(id, card));
+      card.querySelector(".vault-del").addEventListener("click", (e) => {
+        e.stopPropagation();
+        vaultDeleteRun(id);
+      });
+    });
+  }
+
+  async function vaultDeleteRun(id) {
+    const r = await openConfirm({
+      title: t("confirm.delquery.title"),
+      message: t("confirm.delquery.msg"),
+      confirmLabel: t("confirm.delete"),
+      showDontAsk: false,
+    });
+    if (!r.ok) return;
+    await fetch("/history/" + id, { method: "DELETE" });
+    await loadVaultRuns();
+    renderVaultRuns();
+    refreshHistoryCount();
+  }
+
+  async function vaultClearRuns() {
+    const r = await openConfirm({
+      title: t("confirm.clear.title"),
+      message: t("confirm.clear.msg"),
+      confirmLabel: t("confirm.clear.ok"),
+      showDontAsk: false,
+    });
+    if (!r.ok) return;
+    await fetch("/history", { method: "DELETE" });
+    await loadVaultRuns();
+    renderVaultRuns();
+    refreshHistoryCount();
+  }
+
+  // 右栏仓库大厅：所有存过的仓库卡，复用记忆页的 memCardHTML，点卡进拆解详情
+  let vaultHallItems = [];
+
+  async function loadVaultHall() {
+    vaultHallItems = await loadMemory();
+  }
+
+  function renderVaultHall() {
+    const list = $("vault-hall");
+    const items = vaultHallItems;
+    $("btn-vault-hall-clear").hidden = items.length === 0;
+    if (!items.length) {
+      list.innerHTML = '<div class="history-empty">' + esc(t("mem.none")) + "</div>";
+      return;
+    }
+    list.innerHTML = items.map(memCardHTML).join("");
+    Array.from(list.querySelectorAll(".hist-card")).forEach((c) => {
+      c.addEventListener("click", () => vaultOpenRepo(c.dataset.fn));
+    });
+    Array.from(list.querySelectorAll(".hist-del")).forEach((b) => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        vaultDeleteRepo(b.dataset.fn);
+      });
+    });
+  }
+
+  async function vaultDeleteRepo(fullName) {
+    const r = await openConfirm({
+      title: t("confirm.delmem.title"),
+      message: t("confirm.delmem.msg.pre") + fullName + t("confirm.delmem.msg.post"),
+      confirmLabel: t("confirm.delete"),
+      showDontAsk: false,
+    });
+    if (!r.ok) return;
+    await fetch("/memory/repo?full_name=" + encodeURIComponent(fullName), { method: "DELETE" });
+    await loadVaultHall();
+    renderVaultHall();
+    refreshMemoryCount();
+  }
+
+  async function vaultClearHall() {
+    const r = await openConfirm({
+      title: t("confirm.clearmem.title"),
+      message: t("confirm.clearmem.msg"),
+      confirmLabel: t("confirm.clearmem.ok"),
+      showDontAsk: false,
+    });
+    if (!r.ok) return;
+    await fetch("/memory", { method: "DELETE" });
+    await loadVaultHall();
+    renderVaultHall();
+    refreshMemoryCount();
+  }
+
+  // 当前右栏详情展示的仓库，切语言时拿它原地重渲染
+  let vaultRepoEntry = null;
+
+  // seen_runs 时间线：这仓库被哪几次搜到过，最近的排上面，每行时间 + 那次需求 + 命中数。
+  // 带 run_id 的行可点开，拉那次这个仓库的 agent 轨迹；老数据没 run_id 的就纯展示
+  function vaultSeenRunsHTML(seenRuns, fullName) {
+    if (!seenRuns || !seenRuns.length) return "";
+    const rows = seenRuns
+      .slice()
+      .reverse()
+      .map((s) => {
+        const kps = (s.keypoints || []).join(" · ");
+        const clickable = s.run_id != null;
+        const rowCls = "vault-tl-row" + (clickable ? " clickable" : "");
+        const data = clickable ? ' data-run-id="' + s.run_id + '" data-fn="' + esc(fullName) + '"' : "";
+        const caret = clickable ? '<span class="vault-tl-caret">+</span>' : "";
+        return (
+          '<div class="vault-tl-item">' +
+          '<div class="' + rowCls + '"' + data + ">" +
+          '<span class="vault-tl-time">' + fmtTime(s.ts) + "</span>" +
+          '<span class="vault-tl-kp">' + esc(kps) + "</span>" +
+          '<span class="vault-tl-hit">' + (s.hits || 0) + "/" + (s.total || 0) + "</span>" +
+          caret +
+          "</div>" +
+          '<div class="vault-tl-trace"></div>' +
+          "</div>"
+        );
+      })
+      .join("");
+    return '<div class="diss-sec">' + esc(t("vault.timeline")) + '</div><div class="vault-tl">' + rows + "</div>";
+  }
+
+  // 点开一条时间线：拉 /history/{run_id} 取那次的 ranked，筛出这个仓库那次的 trace 渲染出来。
+  // 首次展开才请求，之后不重复；那次搜索被删了或这次没轨迹就给一句提示
+  async function vaultToggleSeenTrace(row) {
+    const item = row.parentElement;
+    const box = item.querySelector(".vault-tl-trace");
+    const caret = row.querySelector(".vault-tl-caret");
+    const open = item.classList.toggle("open");
+    if (caret) caret.textContent = open ? "−" : "+";
+    if (!open || box.dataset.loaded) return;
+
+    box.innerHTML = '<div class="history-empty">…</div>';
+    try {
+      const res = await fetch("/history/" + row.dataset.runId);
+      if (!res.ok) {
+        box.innerHTML = '<div class="history-empty">' + esc(t("vault.runGone")) + "</div>";
+        return;
+      }
+      const run = await res.json();
+      const hit = (run.ranked || []).find((r) => r.full_name === row.dataset.fn);
+      const trace = (hit && hit.trace) || [];
+      if (!trace.length) {
+        box.innerHTML = '<div class="history-empty">' + esc(t("vault.noTrace")) + "</div>";
+        return;
+      }
+      box.innerHTML = trace.map((l) => '<div class="log-line">' + esc(l) + "</div>").join("");
+      box.dataset.loaded = "1";
+    } catch (e) {
+      box.innerHTML = '<div class="history-empty">' + esc(t("vault.runGone")) + "</div>";
+    }
+  }
+
+  // 渲染右栏拆解详情：元数据头 + seen_runs 时间线 + 拆解本体（复用结果卡 renderRanked）
+  function vaultRenderRepoDetail(m) {
+    $("vault-right-title").textContent = m.full_name;
+    const skipped = !m.dissection || !Object.keys(m.dissection).length;
+    $("vault-detail").innerHTML =
+      '<div class="hd-meta-label">' +
+        '<span class="hd-badge">' + esc(t("mem.lastseen")) + fmtTimeFull(m.last_seen) + "</span>" +
+        '<span class="hd-count">🌟 ' + fmtStars(m.stars) + " · " + toMB(m.size) + "MB · " + esc(m.language || "") + "</span>" +
+      "</div>" +
+      '<div class="hd-query-box">' + esc(m.full_name) + "</div>" +
+      vaultSeenRunsHTML(m.seen_runs, m.full_name) +
+      '<div class="vault-detail-diss"></div>';
+    // 时间线每行点开看那次这个仓库的 agent 轨迹，首次展开才拉 /history
+    Array.from($("vault-detail").querySelectorAll(".vault-tl-row.clickable")).forEach((row) => {
+      row.addEventListener("click", () => vaultToggleSeenTrace(row));
+    });
+    // 把记忆行拼成结果卡认识的形状，没拆解的当跳过卡；不带单删按钮（删走大厅卡的 ×）
+    const asRepo = {
+      full_name: m.full_name, dissection: m.dissection || {}, stars: m.stars, size: m.size,
+      read_files: m.read_files || [], skipped: skipped, reason: m.skip_note || "",
+      keypoint_hits: 0, keypoint_total: 0, detail: { keypoints: [] },
+    };
+    renderRanked($("vault-detail").querySelector(".vault-detail-diss"), [asRepo], null);
+  }
+
+  // 点仓库卡或左栏「查看拆解」跳右栏：拉 /memory/repo 渲染拆解 + seen_runs，再扩宽右栏
+  async function vaultOpenRepo(fullName) {
+    let m;
+    try {
+      const res = await fetch("/memory/repo?full_name=" + encodeURIComponent(fullName));
+      if (!res.ok) return;
+      m = await res.json();
+    } catch (e) {
+      return;
+    }
+    vaultRepoEntry = m;
+    vaultRenderRepoDetail(m);
+    vaultShowDetail();
+  }
+
+  // 进 vault：默认落大厅态，左栏搜索记录、右栏仓库大厅现拉现渲染
+  async function openVault() {
+    vaultShowHall();
+    await Promise.all([loadVaultRuns(), loadVaultHall()]);
+    renderVaultRuns();
+    renderVaultHall();
+    showView("vault");
+  }
+  // 右上角「返回搜索」：从 vault 回工作台，按当前搜索状态还原（有结果看结果、在跑看进度、否则搜索输入）
+  function vaultBackToSearch() {
+    if (run && run.ranked && run.ranked.length) {
+      renderWorkspaceResults(run.ranked);
+      showWsPane("list");
+    } else if (run && run.inProgress) {
+      showWsPane("progress");
+    } else {
+      showWsPane("search");
+    }
+    showView("workspace");
+  }
+  $("btn-vault").addEventListener("click", openVault);
+  $("btn-vault-search").addEventListener("click", vaultBackToSearch);
+  $("vault-back").addEventListener("click", vaultShowHall);
+  $("btn-vault-runs-clear").addEventListener("click", vaultClearRuns);
+  $("btn-vault-hall-clear").addEventListener("click", vaultClearHall);
+
   // 语言切换钮接线，首次按存的 lang（默认简体中文）刷一遍文案
   document.querySelectorAll("#lang-toggle .lang-opt").forEach((b) => {
     b.addEventListener("click", () => setLang(b.dataset.lang));
@@ -2048,11 +2364,24 @@
       }
     } else if (rec.kind === "compact") {
       const path = { note_replace: "笔记顶替", summary_fallback: "摘要兜底",
-        hard_truncate_circuit: "熔断硬截断", hard_truncate_failed: "摘要失败·硬截断" }[rec.path] || rec.path;
+        hard_truncate_circuit: "熔断硬截断", hard_truncate_failed: "摘要失败·硬截断",
+        reactive_truncate: "模型拒绝后硬截" }[rec.path] || rec.path;
       html += '<div class="dev-meta">压缩：<b>' + devEsc(path) + "</b> · " + (rec.before || []).length +
-        " → " + (rec.after || []).length + " 条 · 熔断计数 " + (rec.fail_count || 0) + "</div>";
+        " 条压缩为 " + (rec.after || []).length + " 条 · 熔断计数 " + (rec.fail_count || 0) + "</div>";
       html += devFold("压缩前", devJson(rec.before));
       html += devFold("压缩后", devJson(rec.after));
+    } else if (rec.kind === "recall") {
+      if (!rec.fired) {
+        html += '<div class="dev-skip">未召回：' + devEsc(rec.reason) + "</div>";
+      } else {
+        html += '<div class="dev-meta">清单 <b>' + (rec.manifest || []).length + "</b> 条 · 命中仓库 " +
+          (rec.hit_repos || []).length + " · 命中记忆 " + (rec.hit_memories || []).length +
+          " · 候选 " + (rec.ambiguous || []).length + "</div>";
+        html += devFold("给挑选器的清单", devJson(rec.manifest));
+        html += devFold("模型原始返回", rec.raw || "");
+        html += devFold("挑中结果", devJson({ picks: rec.picks, ambiguous: rec.ambiguous,
+          hit_repos: rec.hit_repos, hit_memories: rec.hit_memories }));
+      }
     }
     card.innerHTML = html;
     feed.appendChild(card);
@@ -2087,7 +2416,7 @@
     $("dev-audit-list").hidden = false;
     $("dev-audit-feed").hidden = true;
     $("dev-audit-feed").innerHTML = "";
-    $("dev-audit-back").textContent = "← 返回实时";
+    $("dev-audit-back").textContent = "返回实时";
     $("dev-audit-clear").hidden = false;
     loadAuditList();
   }
@@ -2130,7 +2459,7 @@
     const feed = $("dev-audit-feed");
     feed.hidden = false;
     feed.innerHTML = "";
-    $("dev-audit-back").textContent = "← 返回列表";
+    $("dev-audit-back").textContent = "返回列表";
     $("dev-audit-clear").hidden = true;
     let records = [];
     try { records = (await (await fetch("/chat/dev/audit/" + encodeURIComponent(sid))).json()).records || []; } catch (e) {}

@@ -185,6 +185,18 @@ body {
 .field-hint { font-size:12.5px; line-height:1.5; margin-top:7px; }
 .panel-glass .field-hint { color:rgba(28,26,18,0.5); }
 
+/* 分阶段模型折叠区：默认收起，展开露出六个阶段的模型框 */
+.stage-models { margin-top:18px; }
+.stage-summary {
+  cursor:pointer; list-style:none; user-select:none;
+  font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:0.08em;
+  text-transform:uppercase; color:rgba(28,26,18,0.56);
+}
+.stage-summary::-webkit-details-marker { display:none; }
+.stage-summary::before { content:'+ '; color:var(--moss); }
+.stage-models[open] .stage-summary::before { content:'\2212 '; }
+.stage-models .field { margin-top:12px; }
+
 /* ── 输入框 ─────────────────────────────────────── */
 .inp {
   width:100%; font-family:'Be Vietnam Pro', sans-serif; font-size:15px;
@@ -457,8 +469,9 @@ body {
 /* keypoint 全中绿、部分中黄(默认)、全失红 */
 .rcard-kp.kp-full { background:rgba(74,103,65,0.16); color:var(--moss); }
 .rcard-kp.kp-none { background:rgba(176,53,42,0.14); color:#A83A2C; }
-.rcard-caret { font-size:11px; color:var(--t3); transition:transform 0.3s var(--expo); }
-.rcard.open .rcard-caret { transform:rotate(90deg); }
+.rcard-caret { font-size:14px; color:var(--t3); }
+.rcard-caret::before { content:"+"; }
+.rcard.open .rcard-caret::before { content:"\2212"; }
 .rcard-body { display:grid; grid-template-rows:0fr; transition:grid-template-rows 0.42s var(--expo); }
 .rcard.open .rcard-body { grid-template-rows:1fr; }
 .rcard-inner { overflow:hidden; }
@@ -501,10 +514,24 @@ body {
   color:var(--t3); cursor:pointer; user-select:none; }
 .rcard-trace-head:hover { color:var(--t2); }
 .rcard-trace-n { opacity:0.65; }
-.rcard-trace-body { display:none; margin-top:10px; max-height:380px; overflow:auto;
-  font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--t2); line-height:1.65;
-  background:rgba(28,26,18,0.04); padding:10px 12px; border-radius:7px; }
+.rcard-trace-body { display:none; margin-top:10px; }
 .rcard-trace.open .rcard-trace-body { display:block; }
+
+/* 轨迹代码框：结果卡和记忆库时间线共用的终端风容器，深墨底浅字等宽 */
+.trace-box { max-height:420px; overflow:auto; border-radius:9px; padding:12px 14px;
+  background:var(--dark); font-family:'JetBrains Mono',monospace; font-size:10.5px;
+  line-height:1.6; color:rgba(240,237,229,0.82); }
+.trace-box .log-line { white-space:pre-wrap; word-break:break-word; color:rgba(240,237,229,0.82); }
+.trace-round { white-space:pre-wrap; word-break:break-word; margin-top:14px; padding-top:9px;
+  font-weight:600; color:#d8c979; border-top:1px solid rgba(240,237,229,0.14); }
+.trace-round:first-child { margin-top:0; padding-top:0; border-top:none; }
+.trace-sec { white-space:pre-wrap; word-break:break-word; margin-top:14px; font-weight:600;
+  color:rgba(240,237,229,0.6); letter-spacing:0.02em; }
+.trace-collapse { position:sticky; top:-12px; z-index:1; margin:-12px -14px 8px;
+  padding:7px 14px; background:rgba(20,18,12,0.97); color:rgba(240,237,229,0.7);
+  font-size:10px; letter-spacing:0.04em; cursor:pointer;
+  border-bottom:1px solid rgba(240,237,229,0.14); }
+.trace-collapse:hover { color:rgba(240,237,229,0.95); }
 
 /* 表头 keypoint 子弹清单（替代原来的分号拼接） */
 .hd-kp-list { margin:8px 0 0; padding-left:20px; font-size:13px; line-height:1.7; color:var(--t2); }
@@ -514,7 +541,8 @@ body {
 .cost-area { margin-top:28px; }
 .cost-cap { font-family:'JetBrains Mono',monospace; font-size:8.5px; letter-spacing:0.16em;
   text-transform:uppercase; color:var(--t3); margin-bottom:10px; }
-.cost-table { width:100%; border-collapse:collapse; font-size:11.5px; border-radius:12px; overflow:hidden;
+.cost-table-wrap { overflow-x:auto; border-radius:12px; }
+.cost-table { width:100%; min-width:640px; border-collapse:collapse; font-size:11.5px; border-radius:12px;
   background:rgba(255,255,255,0.4); }
 .cost-table th { text-align:left; padding:9px 12px; background:rgba(28,26,18,0.05);
   font-family:'JetBrains Mono',monospace; font-size:8.5px; text-transform:uppercase;
@@ -643,6 +671,63 @@ body {
 }
 .ws.expanded { grid-template-columns:2fr 1fr; }
 
+/* ── Vault 双栏：左搜索记录、右仓库大厅/拆解详情。平时对半，右栏点开拆解时吃 2/3 ──
+   列宽过渡跟 .ws 同一套，浏览器原生平滑，不用 JS 逐帧 */
+.vault {
+  display:grid; grid-template-columns:1fr 1fr; gap:16px;
+  max-width:1400px; margin:0 auto; height:calc(100vh - 152px);
+  transition:grid-template-columns 0.5s var(--expo);
+}
+.vault.expanded { grid-template-columns:1fr 2fr; }
+.vault-left, .vault-right { display:flex; flex-direction:column; min-width:0;
+  background:linear-gradient(160deg, rgba(255,254,250,0.90), rgba(240,237,229,0.78));
+  border-radius:18px; box-shadow:0 6px 26px -14px rgba(28,26,18,0.22);
+  backdrop-filter:blur(12px); overflow:hidden; }
+.vault-head { display:flex; align-items:center; gap:10px; padding:16px 20px 12px; border-bottom:1px solid var(--line); }
+.vault-title { font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:0.08em; color:var(--t1); font-weight:600; }
+/* 头部小按钮：返回大厅、清空共用一套小巧美术设计 */
+.vhbtn { font-family:'JetBrains Mono',monospace; font-size:10.5px; letter-spacing:0.04em;
+  color:var(--t2); background:none; border:1px solid var(--line2); border-radius:8px;
+  padding:4px 12px; cursor:pointer; transition:border-color 0.16s,color 0.16s; flex:none; }
+.vhbtn:hover { border-color:var(--moss); color:var(--moss); }
+.vhbtn.danger { color:var(--cedar); }
+.vhbtn.danger:hover { border-color:var(--cedar); color:var(--cedar); }
+.vhbtn-clear { margin-left:auto; }
+.vault-runs, .vault-hall, .vault-detail { flex:1; min-height:0; overflow-y:auto; padding:14px;
+  display:flex; flex-direction:column; gap:10px; }
+.vault-hall[hidden], .vault-detail[hidden] { display:none; }
+
+/* 左栏搜索记录卡：折叠头 + 懒加载展开体 */
+.vault-run { border:1px solid var(--line); border-radius:12px; overflow:hidden; flex-shrink:0;
+  background:rgba(255,255,255,0.45); }
+.vault-run.open { border-color:rgba(74,103,65,0.4); box-shadow:0 6px 20px -12px rgba(74,103,65,0.24); }
+.vault-run-head { display:flex; align-items:center; gap:10px; padding:12px 14px; cursor:pointer; transition:background 0.16s; }
+.vault-run-head:hover { background:rgba(74,103,65,0.05); }
+.vault-run-time { font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--t3); flex:none; }
+.vault-run-kp { flex:1; font-size:12.5px; font-weight:600; color:var(--t1);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vault-run-count { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cedar); flex:none; }
+.vault-run .vault-del { position:static; flex:none; }
+.vault-run-body { padding:12px 14px 4px; border-top:1px solid var(--line); }
+.vault-run-repos { margin:10px 0; }
+.vault-run-repo { display:flex; align-items:center; gap:8px; padding:7px 0; border-bottom:1px dashed var(--line); }
+.vault-run-repo:last-child { border-bottom:none; }
+.vru-name { flex:1; font-size:12px; color:var(--t1); word-break:break-all; }
+.vru-hit { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--moss); flex:none; }
+.vru-jump { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cedar);
+  background:none; border:1px solid var(--line2); border-radius:6px; padding:3px 9px; cursor:pointer;
+  flex:none; transition:border-color 0.16s,color 0.16s; }
+.vru-jump:hover { border-color:var(--moss); color:var(--moss); }
+
+/* 右栏拆解详情里的 seen_runs 时间线：这仓库被哪几次搜到过 */
+.vault-tl { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
+.vault-tl-row { display:flex; align-items:center; gap:10px; padding:7px 11px;
+  border:1px solid var(--line); border-radius:8px; background:rgba(255,255,255,0.45); }
+.vault-tl-time { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--t3); flex:none; }
+.vault-tl-kp { flex:1; font-size:11.5px; color:var(--t1);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.vault-tl-hit { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--moss); flex:none; }
+
 /* 左栏：搜索结果 / 会话 */
 .ws-left { display:flex; flex-direction:column; min-width:0;
   background:linear-gradient(160deg, rgba(255,254,250,0.90), rgba(240,237,229,0.78));
@@ -677,6 +762,17 @@ body {
 .ws-newchat:hover { border-color:rgba(74,103,65,0.4); color:var(--moss); background:rgba(74,103,65,0.05); }
 .sess-list { display:flex; flex-direction:column; gap:8px; }
 .sess-empty { font-size:11.5px; color:var(--t3); text-align:center; padding:20px 0; }
+
+/* 记忆 tab：搜索栏固定在上，下面记忆卡列表可滚，点卡注入对话上下文 */
+.ws-mem { flex:1; overflow:hidden; padding:16px; display:flex; flex-direction:column; gap:12px; }
+.ws-mem-search { flex:none; }
+.ws-mem-list { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px; }
+/* 复用 memCardHTML 的卡；这里点卡是注入不是删除，删除钮藏掉、整卡可点 */
+.ws-mem-list .hist-card { cursor:pointer; transition:border-color 0.16s, background 0.16s; }
+.ws-mem-list .hist-card:hover { border-color:rgba(74,103,65,0.4); }
+.ws-mem-list .hist-del { display:none; }
+/* 已注入进上下文的卡：绿边淡绿底，一眼看出注了哪些 */
+.ws-mem-list .hist-card.injected { border-color:var(--moss); background:rgba(74,103,65,0.07); }
 .sess-row { display:flex; align-items:center; gap:8px; padding:11px 14px; border-radius:11px;
   cursor:pointer; background:rgba(255,255,255,0.5); border:1px solid rgba(28,26,18,0.08);
   transition:background 0.2s, border-color 0.2s; }
@@ -771,11 +867,21 @@ body {
 .ws-ctx-chip button { border:none; background:none; cursor:pointer; color:var(--t3); font-size:12px;
   line-height:1; padding:0; }
 .ws-ctx-chip button:hover { color:var(--rust); }
+/* 召回转正的芯片：淡靛蓝底加个「召回」小标，跟用户手点「+」的普通芯片区分 */
+.ws-ctx-recalled { border-color:#b9c6ec; background:#eef1fb; }
+.ws-ctx-tag { font-size:8.5px; background:#5b7fc4; color:#fff; border-radius:3px; padding:0 4px; font-weight:600; }
 /* 对话流 */
 .ws-chat { flex:1; overflow-y:auto; padding:22px; display:flex; flex-direction:column; gap:16px; }
 .ws-msg { font-size:13px; line-height:1.7; max-width:86%; }
-/* AI 回复无气泡、纯文本左对齐（Claude 网页端那种），user 灰底靠右 */
-.ws-msg-assistant { color:var(--t1); align-self:flex-start; }
+/* AI 回复无气泡、纯文本左对齐（Claude 网页端那种），左边挂个可点头像，user 灰底靠右 */
+.ws-msg-assistant { color:var(--t1); align-self:flex-start; display:flex; gap:9px; align-items:flex-start; }
+.ws-msg-assistant .ws-bubble { flex:1; min-width:0; }
+/* AI 头像：点它弹出这轮发给模型的提示词监控。小圆，hover 提示可点 */
+.ws-avatar { flex:none; width:26px; height:26px; margin-top:2px; border-radius:50%;
+  border:1px solid var(--line); background:rgba(74,103,65,0.08); font-size:13px; line-height:1;
+  cursor:pointer; display:flex; align-items:center; justify-content:center;
+  transition:border-color 0.16s, background 0.16s; }
+.ws-avatar:hover { border-color:var(--moss); background:rgba(74,103,65,0.16); }
 /* 轮次之间比段落之间松一档，每次用户新提问上方多留白，问答边界清楚 */
 .ws-msg-user { color:var(--t1); align-self:flex-end; background:rgba(74,103,65,0.10);
   padding:10px 14px; border-radius:13px; margin-top:12px; }
@@ -789,6 +895,60 @@ body {
 @keyframes wscursor { 50% { opacity:0; } }
 /* 错误态：整条淡红，跟正常回复区分开 */
 .ws-bubble.error { color:var(--rust); }
+
+/* ── 提示词监控浮层：点 AI 头像弹出，按板块分色看这轮发给模型的完整提示词 ── */
+.pi-overlay { position:fixed; inset:0; z-index:200; background:rgba(28,26,18,0.42);
+  display:flex; align-items:center; justify-content:center; padding:32px; animation:piIn 0.18s ease; }
+@keyframes piIn { from { opacity:0; } to { opacity:1; } }
+.pi-box { width:min(860px, 100%); max-height:88vh; display:flex; flex-direction:column;
+  background:#fffdf7; border-radius:16px; overflow:hidden; box-shadow:0 20px 60px -20px rgba(28,26,18,0.5); }
+.pi-head { display:flex; align-items:center; justify-content:space-between; padding:14px 18px;
+  border-bottom:1px solid var(--line); font-family:'JetBrains Mono',monospace; font-size:12px;
+  color:var(--t1); font-weight:600; }
+.pi-close { background:none; border:none; font-size:20px; line-height:1; color:var(--t3); cursor:pointer; }
+.pi-close:hover { color:var(--rust); }
+.pi-body { overflow-y:auto; padding:16px 18px; display:flex; flex-direction:column; gap:12px; }
+.pi-empty { color:var(--t3); font-size:13px; text-align:center; padding:24px; }
+/* 这轮历史被压过时顶部的提示条：琥珀色，跟压缩这件事对上 */
+.pi-compacted { background:#fbf3e2; border-left:3px solid var(--amber); border-radius:10px;
+  padding:9px 12px; font-size:12px; line-height:1.5; color:#6b4e0a; }
+.pi-block { border-radius:10px; border-left:3px solid; padding:10px 12px; }
+.pi-label { font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:600;
+  margin-bottom:6px; opacity:0.85; letter-spacing:0.03em; }
+.pi-block pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:12px;
+  line-height:1.6; color:var(--t1); font-family:inherit; }
+/* 四类板块各一色：人设、注入仓库、user、assistant */
+.pi-persona   { background:#f0eefb; border-left-color:#8a7fc4; }
+.pi-memory    { background:#e6f4f4; border-left-color:#4aa3a3; }
+.pi-repo      { background:#eef6ee; border-left-color:var(--moss); }
+.pi-user      { background:#fdf1e6; border-left-color:#cd8f5b; }
+.pi-assistant { background:#f2f2ef; border-left-color:#9a978e; }
+/* 召回补入的段：召回的记忆、候选清单，以及召回转正的仓库段（pi-recalled 盖掉原色）一律靛蓝 */
+.pi-recall    { background:#eef1fb; border-left-color:#5b7fc4; }
+.pi-block.pi-recalled { background:#eef1fb; border-left-color:#5b7fc4; }
+.pi-recall-tag { font-size:9px; background:#5b7fc4; color:#fff; border-radius:4px;
+  padding:1px 5px; font-weight:600; vertical-align:middle; }
+/* 召回判断可视化：小模型区，整体做小、加标签，明确区别于上面主模型的大分段块 */
+.pi-rc-inspect { font-size:11px; }
+.pi-rc-tag { display:inline-block; font-size:10px; font-weight:600; color:#fff; background:#5b7fc4;
+  border-radius:4px; padding:2px 9px; margin-bottom:9px; letter-spacing:0.02em; }
+.pi-rc-inspect .pi-rc-row { font-size:11.5px; color:var(--t1); line-height:1.95; }
+.pi-rc { display:inline-block; font-family:'JetBrains Mono',monospace; font-size:10px;
+  border-radius:4px; padding:1px 6px; margin:0 3px 3px 0; }
+.pi-rc-hit { background:#5b7fc4; color:#fff; }
+.pi-rc-amb { background:#f0d79a; color:#5a4110; }
+.pi-rc-none { color:var(--t3); font-size:11px; }
+.pi-rc-skip { font-size:12px; color:var(--t2); font-style:italic; }
+/* 小模型的 system/user 提示词和回答直接打印，跟主模型一样能看全文，但字更小、框更紧、能滚动 */
+.pi-rc-sublabel { font-family:'JetBrains Mono',monospace; font-size:9.5px; font-weight:600;
+  color:#5b7fc4; margin-top:9px; margin-bottom:3px; letter-spacing:0.02em; }
+.pi-rc-pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:10px; line-height:1.55;
+  color:var(--t2); background:rgba(91,127,196,0.06); border:1px solid rgba(91,127,196,0.18);
+  border-radius:6px; padding:7px 9px; max-height:170px; overflow:auto; }
+/* 小模型的回答单独开一个醒目框：实边靛蓝、深色字、不限高，跟上面提示词的淡框拉开 */
+.pi-rc-anslabel { color:#4a6ab0; margin-top:11px; }
+.pi-rc-answer { color:var(--t1); font-size:11px; background:#eaf0fb; border:1.5px solid #5b7fc4;
+  max-height:none; }
 /* 空态：对话没消息时居中一句提示，配 hud-acc 那道呼吸的柠檬绿短杠 */
 .ws-chat-empty { margin:auto; text-align:center; display:flex; flex-direction:column; align-items:center; gap:10px; }
 .ws-chat-empty-acc { width:22px; height:2px; border-radius:1px; background:var(--lime);
@@ -876,8 +1036,8 @@ body {
 .dev-sec > summary { cursor:pointer; font-family:'JetBrains Mono',monospace; font-size:11px;
   letter-spacing:0.04em; color:var(--cedar); padding:4px 0; list-style:none; }
 .dev-sec > summary::-webkit-details-marker { display:none; }
-.dev-sec > summary::before { content:'▸ '; color:var(--t3); }
-.dev-sec[open] > summary::before { content:'▾ '; }
+.dev-sec > summary::before { content:'+ '; color:var(--t3); }
+.dev-sec[open] > summary::before { content:'\2212 '; }
 .dev-pre { font-family:'JetBrains Mono',monospace; font-size:10.5px; line-height:1.55;
   white-space:pre-wrap; word-break:break-word; color:var(--t2);
   background:rgba(28,26,18,0.04); border-radius:6px; padding:8px 10px; margin-top:4px;
@@ -892,6 +1052,7 @@ body {
 .dev-card-kind.extract { background:rgba(184,130,10,0.14); color:var(--amber); }
 .dev-card-kind.notes { background:rgba(58,106,102,0.14); color:var(--teal); }
 .dev-card-kind.compact { background:rgba(176,106,74,0.16); color:var(--rust); }
+.dev-card-kind.recall { background:rgba(91,127,196,0.16); color:#5b7fc4; }
 .dev-meta { font-size:11px; color:var(--t2); line-height:1.7; }
 .dev-meta b { color:var(--t1); font-weight:600; }
 .dev-skip { font-size:11px; color:var(--t3); font-style:italic; }

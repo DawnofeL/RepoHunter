@@ -11,7 +11,7 @@ import json
 import shutil
 import tempfile
 
-from hunter.config import call_deepseek, set_repo_sem, MODELS, GITHUB_PAT, CLONE_DIR
+from hunter.config import call_deepseek, set_repo_sem, load_skill, MODELS, GITHUB_PAT, CLONE_DIR
 from hunter.cost import track, TokenMeter
 from hunter.repo_detection.agent_tools import TOOL_SCHEMAS, make_dispatch
 from hunter.repo_detection.scoring import reconcile, score_one
@@ -19,12 +19,15 @@ from hunter.repo_detection.tool_loop import (
     _assistant_dict, _run_tool, _guard_dispatch, _try_json, FORCE_STOP_MSG,
 )
 from hunter.repo_detection.log_visual import (
-    _default_emit, _clip, _visual, _log_raw, _status, _emit_token_line, _flush_block,
+    _default_emit, _clip, _visual, _log_raw, _status, _emit_token_line, _flush_block, _fmt_visual,
 )
 from hunter.repo_detection.audit import (
     _audit_anchors, _repair_msg, _drop_bad_designs, _audit_cases,
 )
-from hunter.repo_detection.debate import _fill_stance, _fill_adjudicate, _stance_loop, _debate_json
+from hunter.repo_detection.debate import (
+    _fill_triage, _fill_stance, _fill_adjudicate, _triage, _debate_json,
+)
+from hunter.repo_detection.evidence import build_evidence
 
 
 # 单个仓库最多调几次工具，用完后强制让模型直接给出判断
@@ -199,15 +202,16 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
                       output_language: str = "简体中文", progress=None,
                       log: str = "Visual", emit_log=_default_emit,
                       standards: dict[str, str] | None = None,
-                      cached_dissection: dict | None = None) -> dict:
+                      cached_dissection: dict | None = None,
+                      triage_md: str | None = None) -> dict:
     """
     对一个候选仓库先过 gate 判要不要深挖，要就跑工具循环探查摆事实，再走辩论裁决判 keypoint。
 
     system、gate_user、user 和三份辩论模板由 Repo_Detection 预拼好传入。system 含项目六样信息，README 和
     根目录已在 system 给出，用一层 guard 拦掉模型对它们的重复读取，省工具次数。stars、size 也在
     Repo_Detection 预抓好传入（size 已拼进 system 给模型判体量），这里原样带进结果 dict。
-    content 只摆事实、不判 keypoint；判定走辩论：正反两个立场 agent 带工具并行取证，锚点核验后
-    交一个上下文干净的裁决者出终判。
+    content 只摆事实、不判 keypoint；判定走辩论：每条 keypoint 先分诊判拆解够不够，不够就按
+    分诊清单从克隆里抠源码，正反两方拿同一份材料并行判、锚点核验后交裁决出终判，辩论方不带工具。
 
     Args:
         full_name:     owner/name。
@@ -223,7 +227,8 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
                        None 或某条查不到就退化成只用原文，等价于没这个模块。
         cached_dissection: 记忆库里存的这仓库拆解，命中时由 Repo_Detection 传进来。有值就跳过
                        explorer 那二十次工具循环，直接拿它当拆解往下走辩论；gate 和克隆照跑
-                       （辩论 worker 要读源码、锚点审计要对本地文件核）。None 就正常跑 explorer。
+                       （锚点审计要对本地文件核，按需取证也要读克隆）。None 就正常跑 explorer。
+        triage_md:     分诊 skill 模板。None 就自己 load_skill 加载，Repo_Detection 会预加载好传进来。
         stars:         仓库 star 数，预抓好传入，进结果展示、排序平手比较和辩论判热度。
         size:          仓库体积 KB，预抓好传入，已拼进 system，也给辩论判体量。
         model:         模型名。
@@ -246,6 +251,10 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
         detail 每条 keypoint 带裁决的 status/evidence，外加 advocate/skeptic 两方论据。
         read_files 是这次 Content Filter 实际读过的文件相对路径去重清单，给结论溯源用。
     """
+
+    # triage_md 没传就自己加载（notebook 直接调 explore_one 时的兜底；Repo_Detection 会传进来）
+    if triage_md is None:
+        triage_md = load_skill("triage")
 
     # 给本仓库建一个 worker 并发闸塞进 contextvar，这仓库派的所有 worker 自动继承，
     # 单仓库同时在飞的 LLM 请求受它限；跨仓库总量另受 call_deepseek 里的全局闸限
@@ -435,7 +444,7 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
     if degraded:
         _status(emit_log, full_name, "🔴 JSON 解析失败，降级 unknown", log)
 
-    # content 只摆事实，keypoint 判定走辩论：正反两方带工具并行取证，锚点核验后交裁决出终判
+    # content 只摆事实，keypoint 判定走辩论：先分诊判拆解够不够，不够按需抠源码，再正反裁决出终判
     # content 降级(llm_out 为 None)没有事实可辩、keypoints 为空没有可判的，都跳过辩论全补 miss
     adv_cases: list = []
     ske_cases: list = []
@@ -446,9 +455,15 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
             _status(emit_log, full_name,
                     f"📋 拆解:\n{json.dumps(dissection, ensure_ascii=False, indent=2)}", log)
 
-        _status(emit_log, full_name, f"⚖ 按 keypoint 扇出取证：{len(keypoints)} 条 × 正反两方", log)
+        # 拆解拼进 system 尾部，分诊、正、反三方共享这个前缀，一份拆解全仓库只 miss 一次缓存。
+        # gate/explorer 焐热的是前半段原 system，拆解那段每仓库首次 debate 调用 miss、之后全命中
+        system_debate = (system + "\n\n# 这个仓库的架构拆解\n\n"
+                         "下面是探查源码后得出的客观架构拆解，判断时参考：\n\n"
+                         + json.dumps(dissection, ensure_ascii=False, indent=2))
 
-        # 每条 keypoint 一条独立链路：正反并行取证 → 锚点核验 → 立刻单条裁决，这条不等别的 keypoint。
+        _status(emit_log, full_name, f"⚖ 按 keypoint 扇出判定：{len(keypoints)} 条 × 正反两方", log)
+
+        # 每条 keypoint 一条独立链路：分诊 → 按需取证 → 正反并行 → 锚点核验 → 立刻单条裁决。
         # 一次裁决只看一条 keypoint，上下文干净、不会串条；keypoint 由代码绑定，对齐结构上有保证
         total_workers = 2 * len(keypoints)
         done_workers = 0
@@ -464,14 +479,29 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
 
         async def _judge_one(kp: str) -> tuple:
             kp_tag = kp if len(kp) <= 16 else kp[:16] + "…"
-            adv_user = _fill_stance(advocate_md, kp, llm_out, stars, size, output_language, standards)
-            ske_user = _fill_stance(skeptic_md, kp, llm_out, stars, size, output_language, standards)
-            # 这条自己的正反两方并行，两方都跑完才进裁决
-            (adv_raw, adv_logs), (ske_raw, ske_logs) = await asyncio.gather(
-                _counted(_stance_loop(system, adv_user, local_root, meter, model,
-                                      full_name, f"正方[{kp_tag}]", log)),
-                _counted(_stance_loop(system, ske_user, local_root, meter, model,
-                                      full_name, f"反方[{kp_tag}]", log)),
+
+            # 分诊：判这份拆解够不够判这条，不够就开取证清单。日志攒进 triage_logs 稍后统一打
+            triage_logs: list = []
+            tri = await _triage(system_debate, _fill_triage(triage_md, kp, standards), meter, model,
+                                full_name, f"分诊[{kp_tag}]", log, triage_logs)
+            need = tri.get("need", [])
+
+            # 按需取证：纯代码按清单抠源码，核验限量后拼成文本；够判时清单空、这里回空串
+            evidence = build_evidence(local_root, need)
+            triage_logs.append(_fmt_visual(f"分诊[{kp_tag}] 取证清单 {len(need)} 项，抠得源码 {len(evidence)} 字"))
+
+            # 正反两方拿同一份材料（拆解在 system、按需源码在 user）并行判，都跑完才进裁决
+            adv_user = _fill_stance(advocate_md, kp, stars, size, evidence, output_language, standards)
+            ske_user = _fill_stance(skeptic_md, kp, stars, size, evidence, output_language, standards)
+            adv_logs: list = []
+            ske_logs: list = []
+            adv_raw, ske_raw = await asyncio.gather(
+                _counted(_debate_json([{"role": "system", "content": system_debate},
+                                       {"role": "user", "content": adv_user}],
+                                      meter, model, full_name, f"正方[{kp_tag}]", log, adv_logs)),
+                _counted(_debate_json([{"role": "system", "content": system_debate},
+                                       {"role": "user", "content": ske_user}],
+                                      meter, model, full_name, f"反方[{kp_tag}]", log, ske_logs)),
             )
             adv_case = {"keypoint": kp, **{k: (adv_raw or {}).get(k, "") for k in ("evidence", "where", "searched")}}
             ske_case = {"keypoint": kp, **{k: (ske_raw or {}).get(k, "") for k in ("evidence", "where", "searched")}}
@@ -483,7 +513,8 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
             judge_logs: list = []
             verdict = await _debate_json([{"role": "user", "content": adj_user}], meter, model,
                                          full_name, f"裁决[{kp_tag}]", log, judge_logs)
-            # 这条的正方、反方、裁决三段日志按真实顺序一起打，多条之间不交叉
+            # 这条的分诊、正方、反方、裁决四段日志按真实顺序一起打，多条之间不交叉
+            _flush_block(emit_log, full_name, f"===== 🔍 分诊 · {kp} =====", triage_logs, log)
             _flush_block(emit_log, full_name, f"===== 🟢 正方 · {kp} =====", adv_logs, log)
             _flush_block(emit_log, full_name, f"===== 🔴 反方 · {kp} =====", ske_logs, log)
             _flush_block(emit_log, full_name, f"===== ⚖️ 裁决 · {kp} =====", judge_logs, log)
@@ -491,7 +522,12 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
 
         if progress:
             progress(full_name, rnd, used, "judging", meter.total, meter.hit_rate, "", 0, total_workers)
-        results = await asyncio.gather(*[_judge_one(kp) for kp in keypoints])
+
+        # 先跑第一条焐热 system_debate 里那段拆解的前缀缓存，再并发其余，让它们大概率命中。
+        # 全并发的话所有 keypoint 抢着写同一段新前缀，缓存还没建好就都 miss，拆解白算 n 遍
+        first = await _judge_one(keypoints[0])
+        rest = await asyncio.gather(*[_judge_one(kp) for kp in keypoints[1:]])
+        results = [first] + rest
 
         # gather 保序，results 跟 keypoints 一一对应；每条自己的裁决按下标对齐回清单
         adv_cases = [r[1] for r in results]

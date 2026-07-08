@@ -26,8 +26,8 @@
 </div>
 <div class="hud-right">
   <button class="hud-history" id="btn-ws-preview" hidden>🔬 工作台</button>
-  <button class="hud-history" id="btn-memory" hidden>🍃 <span data-i18n="hud.memory">Repo Memory</span> <span id="memory-count">0</span></button>
-  <button class="hud-history" id="btn-history" hidden>🧩 <span data-i18n="hud.history">History</span> <span id="history-count">0</span></button>
+  <button class="hud-history" id="btn-vault-search" hidden><span data-i18n="hud.tosearch">Search</span></button>
+  <button class="hud-history" id="btn-vault" hidden>⚙️ <span data-i18n="hud.vault">Memory</span></button>
 </div>
 
 <main id="stage">
@@ -48,10 +48,38 @@
         <input type="text" id="in-model" class="inp" placeholder="deepseek-v4-pro" autocomplete="off" spellcheck="false">
       </div>
 
+      <details class="stage-models">
+        <summary class="stage-summary" data-i18n="setup.stages">Per-stage models (optional)</summary>
+        <div class="field">
+          <label class="field-label" data-i18n="setup.stage.qu">Query Understanding</label>
+          <input type="text" id="in-m-qu" class="inp" data-i18n-ph="setup.stage.ph" placeholder="Leave blank to use the model above" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label class="field-label" data-i18n="setup.stage.kp">Keypoint Compile</label>
+          <input type="text" id="in-m-kp" class="inp" data-i18n-ph="setup.stage.ph" placeholder="Leave blank to use the model above" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label class="field-label" data-i18n="setup.stage.cf">Deep Dive</label>
+          <input type="text" id="in-m-cf" class="inp" data-i18n-ph="setup.stage.ph" placeholder="Leave blank to use the model above" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label class="field-label" data-i18n="setup.stage.chat">Chat</label>
+          <input type="text" id="in-m-chat" class="inp" data-i18n-ph="setup.stage.ph" placeholder="Leave blank to use the model above" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label class="field-label" data-i18n="setup.stage.recall">Recall</label>
+          <input type="text" id="in-m-recall" class="inp" data-i18n-ph="setup.stage.ph" placeholder="Leave blank to use the model above" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <label class="field-label" data-i18n="setup.stage.extract">Extract</label>
+          <input type="text" id="in-m-extract" class="inp" data-i18n-ph="setup.stage.ph" placeholder="Leave blank to use the model above" autocomplete="off" spellcheck="false">
+        </div>
+      </details>
+
       <div class="field">
         <label class="field-label">
           <span data-i18n="setup.pat">GitHub PAT</span>
-          <a class="field-link" href="https://github.com/settings/tokens/new?description=RepoHunter&scopes=public_repo" target="_blank" rel="noopener" data-i18n="setup.getpat">Get one ↗</a>
+          <a class="field-link" href="https://github.com/settings/tokens/new?description=RepoHunter&scopes=public_repo" target="_blank" rel="noopener" data-i18n="setup.getpat">Get one</a>
         </label>
         <input type="password" id="in-pat" class="inp" placeholder="ghp_..." autocomplete="off" spellcheck="false">
         <div class="field-hint" data-i18n="setup.pathint">Needed for searching Github Repos.</div>
@@ -74,77 +102,38 @@
           <h1 class="panel-title" data-i18n="results.title">Ranked Results</h1>
           <p class="panel-desc" id="results-sub"></p>
         </div>
-        <button class="btn btn-ghost" id="btn-restart" data-i18n="results.restart">↺ New Search</button>
+        <button class="btn btn-ghost" id="btn-restart" data-i18n="results.restart">New Search</button>
       </div>
       <div class="results-list" id="results-list"></div>
       <div class="cost-area" id="cost-area"></div>
     </div>
   </section>
 
-  <!-- ── View 5: history list ───────────────────────── -->
-  <section class="view view-wide" id="view-history">
-    <div class="results-wrap">
-      <div class="results-head">
-        <div>
-          <div class="panel-step" data-i18n="hist.step">History</div>
-          <h1 class="panel-title" data-i18n="hist.title">Query History</h1>
-          <p class="panel-desc" id="history-sub" data-i18n="hist.sub">Past queries are stored locally, kept across restarts, removed only when you delete them.</p>
+  <!-- ── Vault（双栏：左搜索记录，右仓库大厅/拆解详情）右栏点开详情扩宽，取代旧的 history/memory 页 ── -->
+  <section class="view view-full" id="view-vault">
+    <div class="vault" id="vault">
+      <!-- 左栏：搜索记录（按次），每条可展开列出那次的元数据和命中的仓库。内容第2次填 -->
+      <div class="vault-left">
+        <div class="vault-head">
+          <span class="vault-title" data-i18n="vault.runs">Search Records</span>
+          <button class="vhbtn vhbtn-clear danger" id="btn-vault-runs-clear" hidden data-i18n="hist.clear">Clear All</button>
         </div>
-        <div class="history-actions">
-          <button class="btn btn-ghost btn-danger-ghost" id="btn-history-clear" hidden data-i18n="hist.clear">Clear All</button>
-          <button class="btn btn-ghost" id="btn-history-back" data-i18n="hist.back">Back</button>
-        </div>
+        <div class="vault-runs" id="vault-runs"></div>
       </div>
-      <div class="history-list" id="history-list"></div>
-    </div>
-  </section>
-
-  <!-- ── View 6: history detail ─────────────────────── -->
-  <section class="view view-wide" id="view-history-detail">
-    <div class="results-wrap">
-      <div class="results-head">
-        <div>
-          <div class="panel-step" data-i18n="hd.step">History · Result</div>
-          <h1 class="panel-title" data-i18n="hd.title">Ranked Results</h1>
+      <!-- 右栏：默认仓库记忆大厅（浏览所有仓库），点仓库或左栏跳转切成拆解详情、右栏扩宽 -->
+      <div class="vault-right">
+        <div class="vault-head">
+          <button class="vhbtn" id="vault-back" hidden data-i18n="vault.back">Back to Hall</button>
+          <span class="vault-title" id="vault-right-title" data-i18n="vault.hall">Repo Memory</span>
+          <button class="vhbtn vhbtn-clear danger" id="btn-vault-hall-clear" hidden data-i18n="mem.clear">Clear All</button>
         </div>
-        <button class="btn btn-ghost" id="btn-hd-back" data-i18n="hd.back">Back to History</button>
+        <!-- 大厅态：所有仓库卡，第3次填 -->
+        <div class="vault-hall" id="vault-hall">
+          <div class="history-empty" data-i18n="mem.none">No repos remembered yet.</div>
+        </div>
+        <!-- 详情态：单个仓库的拆解 + seen_runs 时间线，第4次填。默认藏 -->
+        <div class="vault-detail" id="vault-detail" hidden></div>
       </div>
-      <div class="hd-meta" id="hd-sub"></div>
-      <div class="results-list" id="hd-list"></div>
-      <div class="cost-area" id="hd-cost"></div>
-    </div>
-  </section>
-
-  <!-- ── View 7: repo memory list ───────────────────── -->
-  <section class="view view-wide" id="view-memory">
-    <div class="results-wrap">
-      <div class="results-head">
-        <div>
-          <div class="panel-step" data-i18n="mem.step">Repo Memory</div>
-          <h1 class="panel-title" data-i18n="mem.title">Repo Memory</h1>
-          <p class="panel-desc" data-i18n="mem.sub">Analysed repos are remembered across searches, so the same repo is not dug through twice.</p>
-        </div>
-        <div class="history-actions">
-          <button class="btn btn-ghost btn-danger-ghost" id="btn-memory-clear" hidden data-i18n="mem.clear">Clear All</button>
-          <button class="btn btn-ghost" id="btn-memory-back" data-i18n="mem.back">Back</button>
-        </div>
-      </div>
-      <div class="history-list" id="memory-list"></div>
-    </div>
-  </section>
-
-  <!-- ── View 8: repo memory detail ─────────────────── -->
-  <section class="view view-wide" id="view-memory-detail">
-    <div class="results-wrap">
-      <div class="results-head">
-        <div>
-          <div class="panel-step" data-i18n="md.step">Repo Memory · Detail</div>
-          <h1 class="panel-title" data-i18n="md.title">Remembered Repo</h1>
-        </div>
-        <button class="btn btn-ghost" id="btn-md-back" data-i18n="md.back">Back to Memory</button>
-      </div>
-      <div class="hd-meta" id="md-sub"></div>
-      <div class="results-list" id="md-list"></div>
     </div>
   </section>
 
@@ -157,6 +146,7 @@
         <div class="ws-left-head">
           <span class="ws-tab active" data-tab="repo" data-i18n="ws.tab.repo">Results</span>
           <span class="ws-tab" data-tab="chat" data-i18n="ws.tab.chat">Chats</span>
+          <span class="ws-tab" data-tab="mem" data-i18n="ws.tab.mem">Memory</span>
         </div>
 
         <!-- 输入态：需求清单 + 语言 + top_k + 记忆 + 搜索。id 沿用原 form，JS 逻辑不改 -->
@@ -228,6 +218,13 @@
           <button class="ws-newchat" id="btn-new-chat" data-i18n="ws.newchat">+ New Chat</button>
           <div class="sess-list" id="sess-list"></div>
         </div>
+
+        <!-- 记忆态：「记忆」tab 下显示，仓库记忆卡（复用 memCardHTML）+ 搜索栏，点卡注入对话上下文 -->
+        <div class="ws-pane ws-mem" id="ws-mem" hidden>
+          <input type="text" class="inp ws-mem-search" id="ws-mem-search" spellcheck="false"
+                 data-i18n-ph="ws.mem.search" placeholder="Search repo memory…">
+          <div class="ws-mem-list" id="ws-mem-list"></div>
+        </div>
       </div>
       <!-- 右栏：对话 -->
       <div class="ws-right" id="ws-right">
@@ -259,7 +256,7 @@
         </div>
         <div class="ws-input-wrap">
           <textarea class="ws-input" id="ws-input" placeholder="给 AI 发消息…" rows="1"></textarea>
-          <button class="ws-send" id="ws-send">↑</button>
+          <button class="ws-send" id="ws-send">发</button>
         </div>
       </div>
     </div>
@@ -287,7 +284,7 @@
   <!-- 审计视图：落库的历史记录，重启后仍在。默认藏，点🗂进来 -->
   <div class="dev-audit" id="dev-audit" hidden>
     <div class="dev-audit-bar">
-      <button class="dev-audit-back" id="dev-audit-back">← 返回实时</button>
+      <button class="dev-audit-back" id="dev-audit-back">返回实时</button>
       <button class="dev-audit-clear" id="dev-audit-clear">清空全部</button>
     </div>
     <div class="dev-audit-list" id="dev-audit-list"></div>

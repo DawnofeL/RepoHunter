@@ -18,8 +18,7 @@ from hunter.pre_filter.query_understanding import Query_Understanding
 from hunter.pre_filter.keypoint_understanding import Keypoint_Understanding
 from hunter.pre_filter.search_repo import Search_Repositories
 from hunter.repo_detection import Repo_Detection
-from hunter.memory import save_memories
-from hunter import history_store as history
+from hunter import history
 
 
 def _ev(event_type: str, **payload) -> dict:
@@ -116,6 +115,7 @@ async def run_pipeline(params: dict):
         advocate_md   = load_skill("advocate")
         skeptic_md    = load_skill("skeptic")
         adjudicate_md = load_skill("adjudicate")
+        triage_md     = load_skill("triage")
 
         q: asyncio.Queue = asyncio.Queue()
 
@@ -139,7 +139,7 @@ async def run_pipeline(params: dict):
             det_task = asyncio.ensure_future(Repo_Detection(
                 header_md, gate_md, explore_md, advocate_md, skeptic_md, adjudicate_md,
                 repos, queries, output_language, on_event=emit, emit_log=emit_log,
-                standards=standards, use_memory=use_memory))
+                standards=standards, use_memory=use_memory, triage_md=triage_md))
             async for ev in _drain(det_task, q):
                 yield ev
             detection = det_task.result()
@@ -153,14 +153,6 @@ async def run_pipeline(params: dict):
 
         yield _ev("content_done", ranked=ranked, total=len(ranked))
 
-        # 把这批仓库写回记忆，本次需求清单跟着存。不受记忆开关影响（开关只挡读、不挡写，
-        # 关一次漏存一次记忆库会有空洞）。save_memories 内部已裹 try/except，这里 to_thread
-        # 再兜一层，写记忆失败绝不能连累已经跑出来的结果
-        try:
-            await asyncio.to_thread(save_memories, ranked, kp_list)
-        except Exception:
-            traceback.print_exc()
-
         # 4. 成本汇总 + 收尾
         yield _ev("cost", table=dict(COST))
 
@@ -172,11 +164,13 @@ async def run_pipeline(params: dict):
             "repos":     repos,
         }
 
-        # 把这次完整结果落库进历史，sqlite 是阻塞 IO 用 to_thread 包，别卡事件循环；
-        # 存失败只告警，绝不能让已经跑出来的结果因为存历史失败而报错
+        # 把这次搜索落库：save_run 一次写两张表——插一行搜索账本（每个仓库只留轻量增量），
+        # 再把这批仓库 upsert 进仓库账本（拆解全库只存一份、这次搜索追进各自 seen_runs 时间线）。
+        # 写回不受记忆开关影响（开关只挡读、不挡写，关一次漏存一次会有空洞）。sqlite 是阻塞 IO
+        # 用 to_thread 包别卡事件循环；存失败只告警，绝不能让已经跑出来的结果因为存库失败而报错
         try:
             await asyncio.to_thread(
-                history.save_query, params, ranked, len(ranked), dict(COST), process,
+                history.save_run, params, ranked, len(ranked), dict(COST), process,
             )
         except Exception:
             traceback.print_exc()

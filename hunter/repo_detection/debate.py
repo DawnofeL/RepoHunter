@@ -1,25 +1,17 @@
-"""辩论取证与裁决：每条 keypoint 一对正反 worker 带工具取证，裁决者权衡出终判。
+"""
+辩论取证与裁决：每条 keypoint 先分诊判拆解够不够，不够就按需抠源码，再交正反裁决出终判。
 
-_stance_loop 是单个立场 worker 的小号工具循环，_debate_json 发不带工具的强制 JSON 请求（立场
-收尾和裁决共用），_fill_stance/_fill_adjudicate 填正反和裁决的 prompt，_kp_with_standard 把
-判定标准拼进 keypoint。
+_triage 判拆解够不够判这条 keypoint、不够就开取证清单，_debate_json 发不带工具的强制 JSON
+请求（正反立场和裁决共用），_fill_triage/_fill_stance/_fill_adjudicate 填分诊、正反、裁决的
+prompt，_kp_with_standard 把判定标准拼进 keypoint。
 """
 
-import asyncio
 import json
 
 from hunter.config import call_deepseek, MODELS
 from hunter.cost import track, TokenMeter
-from hunter.repo_detection.agent_tools import TOOL_SCHEMAS, make_dispatch
-from hunter.repo_detection.tool_loop import (
-    _assistant_dict, _run_tool, _guard_dispatch, _try_json, FORCE_STOP_MSG,
-)
+from hunter.repo_detection.tool_loop import _try_json
 from hunter.repo_detection.log_visual import _fmt_react, _fmt_visual
-
-
-# 每个立场 worker 最多调几次工具。worker 只管单条 keypoint,锚点直达打底 4 次够;
-# 预算是天花板不是配额,简单条用不满,复合条(一条揉几个意思)才吃得到上限
-STANCE_MAX_TOOLS = 4
 
 
 def _kp_with_standard(keypoint: str, standards: dict[str, str] | None) -> str:
@@ -39,31 +31,46 @@ def _kp_with_standard(keypoint: str, standards: dict[str, str] | None) -> str:
     return f"{keypoint}（判定标准：{std}）" if std else keypoint
 
 
-def _fill_stance(template: str, keypoint: str, facts: dict, stars: int, size: int,
-                 output_language: str, standards: dict[str, str] | None = None) -> str:
-    """
-    把立场提示词(advocate/skeptic 共用占位)的五个占位填成真值。每个立场 worker 只管一条 keypoint。
+def _fill_triage(template: str, keypoint: str, standards: dict[str, str] | None = None) -> str:
+    """把分诊提示词的 keypoint 占位填成真值。拆解在 system 里给，这里只填需求。
 
-    facts 是 content 摆出的项目架构拆解，立场 worker 拿它当取证起点。
-    用字符串替换不用 str.format，facts 正文里有花括号会被 format 当占位符。
+    Args:
+        template:  triage.md 内容。
+        keypoint:  单条 keypoint 原文。
+        standards: {keypoint 原文: 判定标准} 映射，有标准就拼进 {keypoint} 占位。
+    Returns:
+        填好的分诊 user 字符串。
+    """
+    return template.replace("{keypoint}", _kp_with_standard(keypoint, standards))
+
+
+def _fill_stance(template: str, keypoint: str, stars: int, size: int,
+                 evidence: str, output_language: str,
+                 standards: dict[str, str] | None = None) -> str:
+    """
+    把立场提示词(advocate/skeptic 共用占位)的占位填成真值。每个立场只管一条 keypoint。
+
+    拆解已拼进 system，这里不再填 facts；evidence 是分诊判不够时按需从源码抠出的相关片段，
+    够判时是空串。用字符串替换不用 str.format，evidence 正文里有花括号会被 format 当占位符。
 
     Args:
         template:        advocate.md 或 skeptic.md 内容。
         keypoint:        单条 keypoint 原文。
-        facts:           content 输出的事实 dict。
         stars:           仓库 star 数。
         size:            仓库体积 KB，换算成 MB 填进去。
-        output_language: evidence 用的语言。
+        evidence:        按需抠出的源码片段，空串表示这条够判、没额外抠码。
+        output_language: evidence 字段用的语言。
         standards:       {keypoint 原文: 判定标准} 映射，有标准就拼进 {keypoint} 占位。
     Returns:
         填好的立场 user 字符串。
     """
     size_mb = round(size / 1024, 1)
+    ev = evidence or "（这一步没有额外抠取源码，凭上面的架构拆解判断即可）"
     return (template
             .replace("{keypoint}", _kp_with_standard(keypoint, standards))
             .replace("{stars}", str(stars))
             .replace("{size}", str(size_mb))
-            .replace("{facts}", json.dumps(facts, ensure_ascii=False))
+            .replace("{evidence}", ev)
             .replace("{output_language}", output_language))
 
 
@@ -134,109 +141,49 @@ async def _debate_json(messages: list, meter: TokenMeter, model: str | None = No
     return _try_json(await _ask(retry))
 
 
-async def _stance_loop(system: str, stance_user: str, local_root: str,
-                       meter: TokenMeter, model: str | None = None,
-                       full_name: str = "", side: str = "", log: str = "Visual") -> tuple:
+async def _triage(system_debate: str, kp_user: str, meter: TokenMeter,
+                  model: str | None = None, full_name: str = "", label: str = "",
+                  log: str = "Visual", sink: list | None = None) -> dict:
     """
-    一个立场 worker 的小号工具循环：只管单条 keypoint，带四件套取证，预算 STANCE_MAX_TOOLS 次，
-    收尾出单个 case JSON（{"evidence","where","searched"}，没有 keypoint 字段，由调用方按派发时
-    的 keypoint 绑定，对齐由代码保证、不靠模型照抄）。
+    分诊：判这份拆解够不够判这条 keypoint，不够就返回要抠的源码清单。
 
-    system 复用本仓库那份资料页(和 gate/explorer 字节一致，前缀缓存直接命中)，所以照套
-    _guard_dispatch 拦掉重复读 README 和根目录。没有锚点重修，立场锚点的核验在外面
-    _audit_cases 做，核不上作废即可，不值得打回。
-
-    所有 worker 并行跑，日志实时打会交叉，所以这里不实时打，把每一步日志攒进本地 logs
-    （格式化好的文本），连同结果一起返回，由外层 explore_one 跑完后分块统一输出。
+    发一次不带工具的 JSON 请求，system 里已带拆解。解析不出、或结构不对一律当「够判」
+    （need 空）退回，让格式问题不卡链路；模型说的 sufficient 只作参考，真正要不要取证由
+    返回的 need 交给 build_evidence 核验后决定。全部计入 debate 成本阶段。
 
     Args:
-        system:      本仓库预拼的 system。
-        stance_user: 填好的 advocate 或 skeptic user（含单条 keypoint）。
-        local_root:  克隆根目录。
-        meter:       本仓库的 token 累计器。
-        model:       模型名。
-        full_name:   owner/name，透传给 _debate_json（仅日志标签用）。
-        side:        日志标签，如 "正方[必须是多 agent]"。
-        log:         "ReAct" 攒原样完整的消息和回复；"Visual" 攒整理过的摘要。
+        system_debate: 本仓库预拼的 system + 拆解，所有 debate 调用共享这个前缀。
+        kp_user:       填好的分诊 user（含单条 keypoint）。
+        meter:         本仓库的 token 累计器。
+        model:         模型名，不传用 content_filter 默认。
+        full_name:     owner/name，日志用。
+        label:         日志标签，如 "分诊[必须是多 agent]"。
+        log:           "ReAct" 攒原样消息和回复；"Visual" 攒整理过的摘要。
+        sink:          日志收集 list，把格式化文本 append 进去；None 就不攒。
     Returns:
-        (case_dict, logs) 二元组。case_dict 解析不出为 None；logs 是这个 worker 全部日志文本行。
+        {"sufficient": bool, "need": list}，解析不出时给 {"sufficient": True, "need": []}。
     """
-    dispatch = _guard_dispatch(make_dispatch(local_root, set()))
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": stance_user},
-    ]
-    used = 0
-    rnd = 0
-
-    # 这一方的日志攒这里，跑完连同 cases 一起返回，不实时打，避免和另一方交叉
-    logs: list = []
-
-    while True:
-        rnd += 1
+    resp = await call_deepseek(
+        model=model or MODELS["content_filter"],
+        messages=[
+            {"role": "system", "content": system_debate},
+            {"role": "user", "content": kp_user},
+        ],
+        response_format={"type": "json_object"},
+    )
+    track("debate", resp)
+    meter.add(resp)
+    raw = resp.choices[0].message.content or ""
+    if sink is not None:
         if log == "ReAct":
-            logs.append(_fmt_react(f"===== {side} Round {rnd} 发给 LLM 的新增消息 =====", messages[-1]))
+            sink.append(_fmt_react(f"{label} LLM 原始回复", raw))
         else:
-            logs.append(_fmt_visual(f"{side} Round {rnd}"))
+            sink.append(_fmt_visual(f"{label} 完成", raw))
 
-        resp = await call_deepseek(
-            model=model or MODELS["content_filter"],
-            messages=messages,
-            tools=TOOL_SCHEMAS,
-            tool_choice="auto",
-        )
-        track("debate", resp)
-        meter.add(resp)
-        msg = resp.choices[0].message
-
-        # 不调工具了，这条回复就是 cases JSON，坏了走 _debate_json 修格式
-        if not msg.tool_calls:
-            if log == "ReAct":
-                logs.append(_fmt_react(f"{side} Round {rnd} LLM 原始回复（无工具调用，即最终 cases）", msg.content))
-            else:
-                logs.append(_fmt_visual(f"{side} 无工具调用，结论", msg.content))
-            parsed = _try_json(msg.content or "")
-            if parsed is not None:
-                return parsed, logs
-            retry = messages + [
-                {"role": "assistant", "content": msg.content or ""},
-                {"role": "user", "content": "输出的 JSON 格式不合法。内容不变，只修复格式，重新输出合法 JSON。"},
-            ]
-            fixed = await _debate_json(retry, meter, model, full_name, f"{side} 修格式重试", log, logs)
-            return fixed, logs
-
-        # 还要调工具：按预算分配，超额的填占位，套路和 explorer 主循环一致
-        assistant_dict = _assistant_dict(msg)
-        messages.append(assistant_dict)
-        if log == "ReAct":
-            logs.append(_fmt_react(f"{side} Round {rnd} LLM 原始回复", assistant_dict))
-        else:
-            # 模型调工具时顺带说的思考先打出来，别丢，和 explorer 主循环的 💭 一致
-            if msg.content:
-                logs.append(_fmt_visual(f"{side} 💭", msg.content))
-            for tc in msg.tool_calls:
-                logs.append(_fmt_visual(f"{side} → {tc.function.name}({tc.function.arguments})"))
-
-        results_msgs: list = [None] * len(msg.tool_calls)
-        to_run = []
-        for i, tc in enumerate(msg.tool_calls):
-            if used < STANCE_MAX_TOOLS:
-                used += 1
-                to_run.append((i, tc))
-            else:
-                results_msgs[i] = {"role": "tool", "tool_call_id": tc.id,
-                                   "content": "工具预算已用完，请用现有信息收尾"}
-        outs = await asyncio.gather(*[_run_tool(dispatch, tc) for _, tc in to_run])
-        for (i, tc), out in zip(to_run, outs):
-            results_msgs[i] = {"role": "tool", "tool_call_id": tc.id, "content": out}
-            if log == "ReAct":
-                logs.append(_fmt_react(f"{side} Round {rnd} 工具结果消息", results_msgs[i]))
-            else:
-                logs.append(_fmt_visual(f"{side} {tc.function.name} 返回", out))
-        messages += results_msgs
-
-        # 预算耗尽，追加逼停消息强制出 JSON
-        if used >= STANCE_MAX_TOOLS:
-            messages.append({"role": "user", "content": FORCE_STOP_MSG})
-            forced = await _debate_json(messages, meter, model, full_name, f"{side} 预算耗尽逼停", log, logs)
-            return forced, logs
+    # 解析不出或结构不对，退回「够判」不卡链路；need 不是 list 也当空
+    parsed = _try_json(raw)
+    if not isinstance(parsed, dict):
+        return {"sufficient": True, "need": []}
+    need = parsed.get("need")
+    return {"sufficient": parsed.get("sufficient", True),
+            "need": need if isinstance(need, list) else []}

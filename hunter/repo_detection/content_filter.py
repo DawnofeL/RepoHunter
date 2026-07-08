@@ -18,7 +18,7 @@ from hunter.repo_detection.explorer import explore_one
 from hunter.repo_detection.debate import _kp_with_standard
 from hunter.repo_detection.scoring import rank
 from hunter.pre_filter.keypoint_understanding import Keypoint_Understanding
-from hunter.memory import load_memories
+from hunter.history import load_memories
 
 
 def _fill_system(template: str, repo: dict, readme: str, tree: str, size: int) -> str:
@@ -70,7 +70,7 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
                          output_language: str = "简体中文",
                          top_n: int | None = None, on_event=None, log: str = "Visual",
                          emit_log=None, standards: dict[str, str] | None = None,
-                         use_memory: bool = True) -> dict:
+                         use_memory: bool = True, triage_md: str | None = None) -> dict:
     """对每个候选仓库先过 gate 判要不要深挖，要的才 Content Filter，判定走辩论裁决，最后排序返回。仓库之间全并发。
 
     Args:
@@ -98,6 +98,7 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
         use_memory:      前端记忆开关。True（默认）就先查一遍记忆库，命中有拆解的仓库跳过 explorer
                          直接复用；False 完全不查记忆，所有仓库该拆就拆，跟没有记忆模块一样。
                          开关只挡「读记忆」，不挡写回（写回在 webapp 层，跟这里无关）。
+        triage_md:       triage.md 内容，分诊模板。None 就内部自己 load_skill 加载。
 
     Returns:
         含 ranked、total 的 dict。ranked 是 Content Filter 后按 keypoint 命中排序的结果，total 是仓库总数。
@@ -120,6 +121,10 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
             kp_skill = config.load_skill("keypoint_understanding")
             compiled = await Keypoint_Understanding(kp_skill, keypoints)
             standards = {c["keypoint"]: c["standard"] for c in compiled}
+
+    # 分诊 skill 没传就自己加载，调用方（webapp/pipeline）一般预加载好传进来
+    if triage_md is None:
+        triage_md = config.load_skill("triage")
 
     model = config.MODELS["content_filter"]
     n = len(repos)
@@ -168,7 +173,8 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
             return await explore_one(full_name, system, gate_user, explore_user,
                                      advocate_md, skeptic_md, adjudicate_md,
                                      keypoints, stars, size, model, output_language, on_content, log,
-                                     standards=standards, cached_dissection=memo.get(full_name), **extra)
+                                     standards=standards, cached_dissection=memo.get(full_name),
+                                     triage_md=triage_md, **extra)
 
         results = await asyncio.gather(*[process_one(r) for r in repos])
 

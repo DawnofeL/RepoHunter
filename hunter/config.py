@@ -83,9 +83,12 @@ async def call_deepseek(**kwargs):
 
 # 各阶段用的模型，随时在这里调
 MODELS = {
-    "query_understanding":    "deepseek-v4-pro",
-    "keypoint_understanding": "deepseek-v4-pro",
-    "content_filter":         "deepseek-v4-pro",
+    "query_understanding":    "deepseek-v4-flash",
+    "keypoint_understanding": "deepseek-v4-flash",
+    "content_filter":         "deepseek-v4-pro",   # gate + explorer + 辩论，共享资料页缓存，必须同模型
+    "chat":                   "deepseek-v4-pro",
+    "recall":                 "deepseek-v4-flash",
+    "extract":                "deepseek-v4-flash",
 }
 
 
@@ -128,6 +131,10 @@ _HUNTER_DIR = Path(__file__).resolve().parent
 SKILL_DIRS = [
     _HUNTER_DIR / "pre_filter" / "skills",
     _HUNTER_DIR / "repo_detection" / "skills",
+    _HUNTER_DIR / "chat" / "skills",
+    _HUNTER_DIR / "memory" / "extract" / "skills",
+    _HUNTER_DIR / "memory" / "recall" / "skills",
+    _HUNTER_DIR / "memory" / "compact" / "skills",
     _HUNTER_DIR.parent / "skills",
 ]
 
