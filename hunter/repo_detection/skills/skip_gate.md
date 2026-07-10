@@ -19,7 +19,7 @@ description: 只看已给的项目信息，判断这个仓库要不要进入深�
 
 只输出一个 JSON，不要别的话。
 
-要跳过就输出
+要跳过就输出（reason 用 {output_language} 书写）
 
 ```json
 { "skip": true, "reason": "一句话说清它是什么、为什么方向不符" }

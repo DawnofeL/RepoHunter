@@ -72,7 +72,8 @@ def _parse_actions(raw: str) -> list[dict]:
     return []
 
 
-async def _run_extraction(session_id: str, messages: list[dict], model: str) -> None:
+async def _run_extraction(session_id: str, messages: list[dict], model: str,
+                          output_language: str = "简体中文") -> None:
     """跑一次提取：读游标取新消息，够阈值就调模型出动作，校验落库，成功才挪游标。
 
     只处理游标之后的新消息(增量)。repo 类的 full_name 对 history 仓库账本核验，编出来的丢掉；
@@ -90,7 +91,9 @@ async def _run_extraction(session_id: str, messages: list[dict], model: str) -> 
         return
 
     manifest = await asyncio.to_thread(list_manifest)
-    skill = load_skill("extract_memories").replace("{memories}", _fmt_manifest(manifest))
+    skill = (load_skill("extract_memories")
+             .replace("{memories}", _fmt_manifest(manifest))
+             .replace("{output_language}", output_language))
     convo = "\n\n".join(f"{msg.get('role')}: {msg.get('content')}" for msg in new_msgs)
 
     resp = await call_deepseek(
@@ -133,23 +136,25 @@ async def _run_extraction(session_id: str, messages: list[dict], model: str) -> 
     })
 
 
-async def _safe_extract(session_id: str, messages: list[dict], model: str) -> None:
+async def _safe_extract(session_id: str, messages: list[dict], model: str,
+                        output_language: str = "简体中文") -> None:
     """包一层 try/except，提取失败只打日志绝不影响对话，游标也不动、下次重提。"""
     try:
-        await _run_extraction(session_id, messages, model)
+        await _run_extraction(session_id, messages, model, output_language)
     except Exception:
         traceback.print_exc()
 
 
-async def _extract_single_flight(session_id: str, messages: list[dict], model: str) -> None:
+async def _extract_single_flight(session_id: str, messages: list[dict], model: str,
+                                 output_language: str = "简体中文") -> None:
     """单飞：同时只跑一个提取，跑着时新触发压进 pending 覆盖旧的，跑完拿最新的补一次。"""
     global _extract_running, _extract_pending
     if _extract_running:
-        _extract_pending = (session_id, messages, model)
+        _extract_pending = (session_id, messages, model, output_language)
         return
     _extract_running = True
     try:
-        await _safe_extract(session_id, messages, model)
+        await _safe_extract(session_id, messages, model, output_language)
         while _extract_pending is not None:
             job = _extract_pending
             _extract_pending = None
@@ -158,10 +163,12 @@ async def _extract_single_flight(session_id: str, messages: list[dict], model: s
         _extract_running = False
 
 
-def spawn_extraction(session_id: str, messages: list[dict], model: str) -> None:
+def spawn_extraction(session_id: str, messages: list[dict], model: str,
+                     output_language: str = "简体中文") -> None:
     """一轮聊完起个后台任务跑提取，不阻塞回答。任务引用存进 _bg_tasks 防被 GC。"""
     if not session_id or not messages:
         return
-    task = asyncio.create_task(_extract_single_flight(session_id, list(messages), model))
+    task = asyncio.create_task(
+        _extract_single_flight(session_id, list(messages), model, output_language))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)

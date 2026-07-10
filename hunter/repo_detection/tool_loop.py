@@ -8,6 +8,8 @@ FORCE_STOP_MSG 是工具预算用满时追加的固定逼停消息。
 import json
 import re
 
+from hunter.repo_detection.agent_tools import is_archived_read
+
 
 # 工具预算用满时追加的逼停消息，固定字符串不带变量，每次内容一样才能命中缓存
 FORCE_STOP_MSG = "系统提示:工具预算已用完，不要再调用任何工具，立即用现在掌握的信息，按规定格式输出最终 JSON。"
@@ -91,13 +93,15 @@ async def _run_tool(dispatch: dict, tc) -> str:
         return f"工具执行出错：{e}"
 
 
-def _guard_dispatch(base: dict) -> dict:
+def _guard_dispatch(base: dict, read_cache: dict | None = None) -> dict:
     """给调度表套两层拦截：根目录树和 README 已在 system 给了，模型再要就直接回提示不真跑。
 
-    explorer 和辩论的立场 agent 共用同一份 system，所以都套这层 guard 省工具次数。
+    explorer 和辩论的立场 agent 共用同一份 system，所以都套这层 guard 省工具次数。传了 read_cache
+    时，被滚动清理归档过的 README 段是合理重读（内容已不在上下文里），放行不挡。
 
     Args:
-        base: make_dispatch 返回的原始调度表。
+        base:       make_dispatch 返回的原始调度表。
+        read_cache: 本仓库已读缓存，用来放行归档过的 README 重读；None 就不放行（辩论方没有清理，用不上）。
     Returns:
         换上 guard 版 list_tree / read_file 的调度表，grep_code 和 glob_files 照旧。
     """
@@ -108,9 +112,12 @@ def _guard_dispatch(base: dict) -> dict:
         return await base["list_tree"](args)
 
     async def _guarded_read_file(args: dict) -> str:
-        """拦截读 README 的请求，README 已在 system 给了，文件名大小写不定靠后缀判。"""
+        """拦截读 README 的请求，README 已在 system 给了，文件名大小写不定靠后缀判。
+
+        但如果这段 README 之前读过、又被滚动清理归档了，那是合理重读，放行让它读回来。
+        """
         leaf = args.get("path", "").split("/")[-1].lower()
-        if leaf.startswith("readme"):
+        if leaf.startswith("readme") and not (read_cache and is_archived_read(read_cache, args)):
             return "README 已在任务开头给你了，看那份，不用再读。"
         return await base["read_file"](args)
 

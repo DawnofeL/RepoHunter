@@ -76,6 +76,8 @@ class ChatRequest(BaseModel):
     context: list[str] = []
     # 会话 id，提取记忆按它读写游标；空串就不触发提取（只答不提）
     session_id: str = ""
+    # 界面语言，决定助手回答语言和 system 各段包装文案（跟搜索侧 RunRequest 同一套取值）
+    output_language: str = "简体中文"
 
 
 class ChatSaveRequest(BaseModel):
@@ -149,7 +151,7 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
 
     # hunter.chat 吐中性事件 dict，这层把每个包成 SSE 帧再流出去
     async def _sse():
-        async for ev in stream_chat(req.messages, req.context, req.session_id):
+        async for ev in stream_chat(req.messages, req.context, req.session_id, req.output_language):
             yield sse_event(ev)
 
     return EventSourceResponse(_sse())

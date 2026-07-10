@@ -14,34 +14,43 @@ from hunter.repo_detection.tool_loop import _try_json
 from hunter.repo_detection.log_visual import _fmt_react, _fmt_visual
 
 
-def _kp_with_standard(keypoint: str, standards: dict[str, str] | None) -> str:
+def _kp_with_standard(keypoint: str, standards: dict[str, str] | None,
+                      output_language: str = "简体中文") -> str:
     """把一条 keypoint 拼成「原文（判定标准：...）」的形式，供辩论各方看统一标准。
 
     standards 是 keypoint 原文到编译出的标准的映射。这条没标准（编译失败、或压根没编译）
     就只回原文，等价于没有 Keypoint_Understanding 这个模块。gate、正反方两处共用这个格式，
-    保证判定各方看到的标准表述一致（裁决不拼标准，只权衡双方已在标准下取的证据）。
+    保证判定各方看到的标准表述一致（裁决不拼标准，只权衡双方已在标准下取的证据）。包装词
+    按 output_language 走，免得英文提示词里插一句中文。
 
     Args:
         keypoint:  单条 keypoint 原文。
         standards: {原文: 标准} 映射，None 或查不到就只用原文。
+        output_language: 「判定标准」这个包装词用什么语言。
     Returns:
         带标准的 keypoint 文本，或纯原文。
     """
     std = (standards or {}).get(keypoint, "")
-    return f"{keypoint}（判定标准：{std}）" if std else keypoint
+    if not std:
+        return keypoint
+    if output_language == "English":
+        return f"{keypoint} (criterion: {std})"
+    return f"{keypoint}（判定标准：{std}）"
 
 
-def _fill_triage(template: str, keypoint: str, standards: dict[str, str] | None = None) -> str:
+def _fill_triage(template: str, keypoint: str, standards: dict[str, str] | None = None,
+                 output_language: str = "简体中文") -> str:
     """把分诊提示词的 keypoint 占位填成真值。拆解在 system 里给，这里只填需求。
 
     Args:
         template:  triage.md 内容。
         keypoint:  单条 keypoint 原文。
         standards: {keypoint 原文: 判定标准} 映射，有标准就拼进 {keypoint} 占位。
+        output_language: 判定标准包装词的语言。
     Returns:
         填好的分诊 user 字符串。
     """
-    return template.replace("{keypoint}", _kp_with_standard(keypoint, standards))
+    return template.replace("{keypoint}", _kp_with_standard(keypoint, standards, output_language))
 
 
 def _fill_stance(template: str, keypoint: str, stars: int, size: int,
@@ -65,9 +74,14 @@ def _fill_stance(template: str, keypoint: str, stars: int, size: int,
         填好的立场 user 字符串。
     """
     size_mb = round(size / 1024, 1)
-    ev = evidence or "（这一步没有额外抠取源码，凭上面的架构拆解判断即可）"
+    if evidence:
+        ev = evidence
+    elif output_language == "English":
+        ev = "(No extra source code was pulled for this step; judge from the architecture breakdown above.)"
+    else:
+        ev = "（这一步没有额外抠取源码，凭上面的架构拆解判断即可）"
     return (template
-            .replace("{keypoint}", _kp_with_standard(keypoint, standards))
+            .replace("{keypoint}", _kp_with_standard(keypoint, standards, output_language))
             .replace("{stars}", str(stars))
             .replace("{size}", str(size_mb))
             .replace("{evidence}", ev)

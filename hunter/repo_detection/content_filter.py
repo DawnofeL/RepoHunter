@@ -58,9 +58,10 @@ def _fill_explore(template: str, output_language: str) -> str:
     return template.replace("{output_language}", output_language)
 
 
-def _fill_gate(template: str, keypoints: list, standards: dict[str, str] | None = None) -> str:
+def _fill_gate(template: str, keypoints: list, standards: dict[str, str] | None = None,
+               output_language: str = "简体中文") -> str:
     """把 gate 提示词 user 里的 keypoint 清单占位填成真值。有 standards 就把判定标准拼进每条。"""
-    kp_texts = [_kp_with_standard(kp, standards) for kp in keypoints]
+    kp_texts = [_kp_with_standard(kp, standards, output_language) for kp in keypoints]
     return template.replace("{keypoints}", json.dumps(kp_texts, ensure_ascii=False))
 
 
@@ -119,12 +120,15 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
         standards = {}
         if keypoints:
             kp_skill = config.load_skill("keypoint_understanding")
-            compiled = await Keypoint_Understanding(kp_skill, keypoints)
+            compiled = await Keypoint_Understanding(kp_skill, keypoints, output_language)
             standards = {c["keypoint"]: c["standard"] for c in compiled}
 
     # 分诊 skill 没传就自己加载，调用方（webapp/pipeline）一般预加载好传进来
     if triage_md is None:
         triage_md = config.load_skill("triage")
+
+    # gate skill 的输出语言占位符在这里统一填好，所有仓库共用同一份填好的模板
+    gate_md = gate_md.replace("{output_language}", output_language)
 
     model = config.MODELS["content_filter"]
     n = len(repos)
@@ -165,7 +169,7 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
             )
             readme = clean_readme(raw) if raw else ""
             system = _fill_system(header_md, repo, readme, tree, size)
-            gate_user = _fill_gate(gate_md, keypoints, standards)
+            gate_user = _fill_gate(gate_md, keypoints, standards, output_language)
             explore_user = _fill_explore(explore_md, output_language)
             # emit_log 为 None 就不传，让 explore_one 用它自己的默认（直接 print）
             extra = {"emit_log": emit_log} if emit_log is not None else {}

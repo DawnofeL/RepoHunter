@@ -7,10 +7,12 @@ compact 子包（S5）：对话侧的会话压缩，memory 下跟 extract、reca
 
 from hunter.memory.compact.note import init_notes, get_note, spawn_note, list_note_manifest
 from hunter.memory.compact.compact import (
-    maybe_compact, reset_cursors_after_compact, force_truncate,
+    maybe_compact, reset_cursors_after_compact, force_truncate, COMPACT_THRESHOLD,
 )
+from hunter.memory.compact.tokens import estimate_tokens
 
 __all__ = [
     "init_notes", "get_note", "spawn_note", "list_note_manifest",
     "maybe_compact", "reset_cursors_after_compact", "force_truncate",
+    "estimate_tokens", "COMPACT_THRESHOLD",
 ]

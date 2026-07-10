@@ -912,11 +912,39 @@ body {
 /* 这轮历史被压过时顶部的提示条：琥珀色，跟压缩这件事对上 */
 .pi-compacted { background:#fbf3e2; border-left:3px solid var(--amber); border-radius:10px;
   padding:9px 12px; font-size:12px; line-height:1.5; color:#6b4e0a; }
+/* 上下文占用条：常驻，越接近压缩触发线颜色越深 */
+.pi-gauge { display:flex; flex-direction:column; gap:5px; }
+.pi-gauge-label { font-size:11.5px; color:var(--t3); font-family:'JetBrains Mono',monospace; }
+.pi-gauge-label b { color:var(--t1); }
+.pi-gauge-bar { height:6px; border-radius:3px; background:var(--line); overflow:hidden; }
+.pi-gauge-fill { height:100%; border-radius:3px; transition:width 0.2s ease; }
+.pi-gauge-fill.pi-gauge-low  { background:var(--moss); }
+.pi-gauge-fill.pi-gauge-mid  { background:var(--amber); }
+.pi-gauge-fill.pi-gauge-high { background:var(--rust); }
 .pi-block { border-radius:10px; border-left:3px solid; padding:10px 12px; }
 .pi-label { font-family:'JetBrains Mono',monospace; font-size:10.5px; font-weight:600;
-  margin-bottom:6px; opacity:0.85; letter-spacing:0.03em; }
+  margin-bottom:6px; opacity:0.85; letter-spacing:0.03em;
+  display:flex; align-items:center; justify-content:space-between; gap:8px; }
 .pi-block pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:12px;
   line-height:1.6; color:var(--t1); font-family:inherit; }
+/* 右上角展开/收起按钮 */
+.pi-fold { background:none; border:none; cursor:pointer; font-size:13px; line-height:1;
+  color:var(--t3); padding:0 2px; }
+.pi-fold:hover { color:var(--t1); }
+/* 折叠态：正文只露约 3 行，底部渐隐提示还有更多，点 ▽ 展开 */
+.pi-block.pi-collapsed pre { max-height:4.8em; overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,#000 60%,transparent); mask-image:linear-gradient(180deg,#000 60%,transparent); }
+/* 框中框：user 外框里嵌的 compact 笔记，照召回面板的设计语言换成琥珀系——
+   胶囊标签 + 淡琥珀圆角滚动框，跟小模型区的靛蓝一眼区分 */
+.pi-cn-tag { display:inline-block; font-size:10px; font-weight:600; color:#fff; background:#c9973f;
+  border-radius:4px; padding:2px 9px; margin-bottom:7px; letter-spacing:0.02em; }
+.pi-cn-pre { margin:0; white-space:pre-wrap; word-break:break-word; font-size:10px; line-height:1.55;
+  color:var(--t2); background:rgba(201,151,63,0.07); border:1px solid rgba(201,151,63,0.28);
+  border-radius:6px; padding:7px 9px; max-height:220px; overflow:auto; }
+/* 旧版折叠子框的配色留给别处引用兜底 */
+.pi-compact-note { background:#fbf3e2; border-left-color:var(--amber); }
+/* 框中框外框里接在 compact 笔记下面的真实 user 正文，跟笔记框拉开一点距离 */
+.pi-compact-tail { margin-top:9px; }
 /* 四类板块各一色：人设、注入仓库、user、assistant */
 .pi-persona   { background:#f0eefb; border-left-color:#8a7fc4; }
 .pi-memory    { background:#e6f4f4; border-left-color:#4aa3a3; }

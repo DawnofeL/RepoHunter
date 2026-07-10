@@ -28,6 +28,7 @@ from hunter.memory.extract.extractor import spawn_extraction
 from hunter.memory.compact import (
     init_notes, get_note, spawn_note, list_note_manifest,
     maybe_compact, reset_cursors_after_compact, force_truncate,
+    estimate_tokens, COMPACT_THRESHOLD,
 )
 
 

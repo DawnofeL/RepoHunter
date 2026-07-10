@@ -13,7 +13,10 @@ import tempfile
 
 from hunter.config import call_deepseek, set_repo_sem, load_skill, MODELS, GITHUB_PAT, CLONE_DIR
 from hunter.cost import track, TokenMeter
-from hunter.repo_detection.agent_tools import TOOL_SCHEMAS, make_dispatch
+from hunter.repo_detection.agent_tools import (
+    TOOL_SCHEMAS, make_dispatch, archive_segment, is_archived_read, MAX_LINES,
+)
+from hunter.memory.compact.tokens import estimate_tokens
 from hunter.repo_detection.scoring import reconcile, score_one
 from hunter.repo_detection.tool_loop import (
     _assistant_dict, _run_tool, _guard_dispatch, _try_json, FORCE_STOP_MSG,
@@ -32,6 +35,33 @@ from hunter.repo_detection.evidence import build_evidence
 
 # 单个仓库最多调几次工具，用完后强制让模型直接给出判断
 MAX_TOOLS = 20
+
+
+# 滚动清理触发线：历史里 system 之外的部分（工具返回那些）估出来超过这个 token 数就清一轮。
+# 探查场景越早清、每轮喂给模型的越干净，拆解质量越稳，不用等快撑爆才动手
+CLEAN_TRIGGER_TOKENS = 20_000
+
+# 清理后要腾出的目标：清完剩余空间（还是 system 之外那部分）压到这个数以下才算够，
+# 达不到就少留一个读文件结果再清，一路减到只剩最近一个还超就截断它
+CLEAN_TARGET_TOKENS = 12_000
+
+# 清理时最多先留几个最近的读文件结果，从这个数往下试着减，直到剩余压进目标
+CLEAN_KEEP_START = 5
+
+# 清一段读文件返回时，正文换成的占位符模板。带文件名和行段，方便模型日后要回看时精准重新定位
+_CLEARED_TMPL = ("(此处原为 {path} 行 {start}-{end} 的内容，已清理以节省上下文，"
+                 "如需可重新读取，至多两次)")
+
+
+# 探查预算耗尽后，若锚点审计发现坏锚点，额外解锁这么多次工具专供模型重查锚点。
+# 探查阶段常把 MAX_TOOLS 烧光，审计打回的重修又要带工具核实，没有这笔独立额度重修就
+# 只能直接删点。这笔额度只在修复轮解锁，不计入 MAX_TOOLS。
+REPAIR_BUDGET = 3
+
+
+# 同一工具加同一参数连续调用达到这个次数就判死循环，硬中断进强制交卷。
+# 判据看调用指纹（工具名+关键参数），不同参数会清零，不误伤正常的连续读不同文件。
+DUP_CALL_LIMIT = 3
 
 
 # 半程盘点提醒：工具用到半预算时注入一次，把模型从发散探查按回对照契约查漏
@@ -53,6 +83,35 @@ def _futile(out: str) -> bool:
     """判一条工具返回是不是零新信息，只看开头 40 字里有没有命中标记表。"""
     head = str(out)[:40]
     return any(mark in head for mark in FUTILE_MARKS)
+
+
+def _call_fp(tc) -> str:
+    """把一个工具调用规约成指纹：工具名 + 原始参数串。
+
+    参数串原样用，模型用完全相同的参数重复调同一个工具才会撞出同一指纹；读不同文件、
+    搜不同 pattern 指纹都不同，不会误伤正常探查。
+
+    Args:
+        tc: 模型给的一个 tool_call 对象。
+    Returns:
+        工具名和参数拼成的指纹字符串。
+    """
+    return f"{tc.function.name}|{tc.function.arguments or ''}"
+
+
+def _is_archived_reread(tc, read_cache: dict) -> bool:
+    """判一个工具调用是不是「重读一段被清理归档过的读文件」，是就不算它进死循环指纹。
+
+    只认 read_file，参数解析坏了当不是。归档重读的指纹跟当初那次读一样，但它是系统清理逼出来的
+    合理重读，重读上限那关自会拦，不该在这里被误判成死循环。
+    """
+    if tc.function.name != "read_file":
+        return False
+    try:
+        args = json.loads(tc.function.arguments or "{}")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return is_archived_read(read_cache, args)
 
 
 async def _call_explore(messages: list, meter: TokenMeter, model: str | None = None) -> object:
@@ -116,9 +175,11 @@ async def _call_final(messages: list, meter: TokenMeter, model: str | None = Non
 
 async def _parse_final(messages: list, raw: str, meter: TokenMeter, model: str | None = None) -> dict | None:
     """
-    解析收尾 JSON，坏了就塞回去让模型只修格式重试一次，仍坏返回 None。
+    解析收尾 JSON，坏了先让模型只修格式重试一次，仍坏再抢救一次提取，都失败返回 None。
 
-    重试消息接在原历史后面，前缀没变所以能命中缓存，几乎不额外花钱。
+    重试和抢救都接在原历史后面，前缀没变所以能命中缓存，几乎不额外花钱。抢救针对模型
+    彻底不听格式指令、整段吐大白话的情况：一整个仓库探查下来十几万 token，栽在最后一步
+    格式上全损太亏，多花一次调用把它上一段回复里的内容硬提成 JSON，能救一个算一个。
 
     Args:
         messages: 当前对话历史，重试时在它后面追加。
@@ -126,7 +187,7 @@ async def _parse_final(messages: list, raw: str, meter: TokenMeter, model: str |
         meter:    本仓库的 token 累计器。
         model:    模型名，不传时用 content_filter 默认。
     Returns:
-        解析出的 dict，重试后仍解析不出返回 None。
+        解析出的 dict，重试和抢救后仍解析不出返回 None。
     """
     parsed = _try_json(raw)
     if parsed is not None:
@@ -137,6 +198,18 @@ async def _parse_final(messages: list, raw: str, meter: TokenMeter, model: str |
         {"role": "user", "content": "输出的 JSON 格式不合法。内容不变，只修复格式，重新输出合法 JSON。"},
     ]
     resp = await _call_final(retry, meter, model)
+    retry_raw = resp.choices[0].message.content or ""
+    parsed = _try_json(retry_raw)
+    if parsed is not None:
+        return parsed
+
+    # 两次修格式都没用，最后抢救一次：把它刚才那段吐出来的东西当素材，让它照输出契约提取成 JSON
+    rescue = retry + [
+        {"role": "assistant", "content": retry_raw},
+        {"role": "user", "content": "还是不合法。别管之前的话，直接从你上面写过的内容里，"
+                                     "按 dissection 的输出契约提取信息，只输出一个合法 JSON，不要任何别的字。"},
+    ]
+    resp = await _call_final(rescue, meter, model)
     return _try_json(resp.choices[0].message.content or "")
 
 
@@ -194,6 +267,200 @@ async def _call_gate(system: str, gate_user: str, meter: TokenMeter, model: str 
     meter.add(resp)
     data = _try_json(resp.choices[0].message.content or "")
     return data if isinstance(data, dict) else {"skip": False}
+
+
+async def _repair_round(messages: list, dispatch: dict, meter: TokenMeter, model: str | None,
+                        full_name: str, log: str, emit_log) -> dict | None:
+    """审计打回后的带工具重修：解锁 REPAIR_BUDGET 次工具让模型重查锚点，再出一次最终 JSON。
+
+    探查阶段常把 MAX_TOOLS 烧光，主循环里的重修那时已经没工具可用、只能直接删点。这里给一笔
+    独立小额度，让模型真的用 glob/grep/read 去核实打回的那几个锚点、把 where 改对，救回被删的
+    设计点。额度用完（或模型提前不调工具）就收尾出 JSON。messages 已在调用前追加好重修指令。
+
+    Args:
+        messages: 当前对话历史，末尾已是重修指令。函数内继续往末尾追加。
+        dispatch: 工具调度表，跟主循环用的是同一份（带 guard）。
+        meter:    本仓库的 token 累计器。
+        model:    模型名。
+        full_name: owner/name，日志用。
+        log:      日志模式。
+        emit_log: 日志回调。
+    Returns:
+        重修后解析出的最终 JSON dict，解析不出返回 None。
+    """
+    used = 0
+    while used < REPAIR_BUDGET:
+        resp = await _call_explore(messages, meter, model)
+        msg = resp.choices[0].message
+
+        # 模型不调工具了，这轮就是重修后的最终判断
+        if not msg.tool_calls:
+            if log != "ReAct":
+                _visual(emit_log, full_name, "修复轮结论", msg.content)
+            return await _parse_final(messages, msg.content or "", meter, model)
+
+        messages.append(_assistant_dict(msg))
+        if log != "ReAct":
+            for tc in msg.tool_calls:
+                _visual(emit_log, full_name, f"→(修复) {tc.function.name}({tc.function.arguments})")
+
+        # 修复轮用自己的额度，一轮里超额的填占位，不真跑
+        results_msgs: list = [None] * len(msg.tool_calls)
+        to_run = []
+        for i, tc in enumerate(msg.tool_calls):
+            if used < REPAIR_BUDGET:
+                used += 1
+                to_run.append((i, tc))
+            else:
+                results_msgs[i] = {"role": "tool", "tool_call_id": tc.id,
+                                   "content": "修复额度已用完，请用现有信息重新输出完整 JSON"}
+        outs = await asyncio.gather(*[_run_tool(dispatch, tc) for _, tc in to_run])
+        for (i, tc), out in zip(to_run, outs):
+            results_msgs[i] = {"role": "tool", "tool_call_id": tc.id, "content": out}
+            if log != "ReAct":
+                _visual(emit_log, full_name, f"{tc.function.name} 返回", out)
+        messages += results_msgs
+
+    # 额度用满还在调工具，逼它不带工具直接出 JSON
+    messages.append({"role": "user", "content": FORCE_STOP_MSG})
+    resp = await _call_final(messages, meter, model)
+    return await _parse_final(messages, resp.choices[0].message.content or "", meter, model)
+
+
+def _read_result_indices(messages: list) -> list[dict]:
+    """扫历史，找出所有「读文件工具的返回」消息，回一份按出现顺序排的清单。
+
+    先把每个 assistant 消息里的工具调用按 id 建索引（id → 调用了什么、参数是什么），再逐条
+    找 role=tool 的返回消息，凭它的 tool_call_id 回查是不是 read_file 调用，是就记下它在
+    messages 里的下标和这次读的 (path, offset, limit)。只认还没被清过的（content 不是占位符）。
+
+    Args:
+        messages: 当前对话历史。
+    Returns:
+        每项 {"idx": 在 messages 里的下标, "key": (path, offset, limit)} 的清单，按出现先后排。
+    """
+    # id → 这次调用的 (工具名, 参数 dict)
+    call_by_id: dict = {}
+    for m in messages:
+        if m.get("role") == "assistant" and m.get("tool_calls"):
+            for tc in m["tool_calls"]:
+                try:
+                    args = json.loads(tc["function"].get("arguments") or "{}")
+                except (json.JSONDecodeError, TypeError):
+                    args = {}
+                call_by_id[tc["id"]] = (tc["function"]["name"], args)
+
+    found = []
+    for i, m in enumerate(messages):
+        if m.get("role") != "tool":
+            continue
+        name, args = call_by_id.get(m.get("tool_call_id"), ("", {}))
+        if name != "read_file":
+            continue
+        # 已经清成占位符的不再算进来
+        if str(m.get("content", "")).startswith("(此处原为"):
+            continue
+        path = args.get("path", "")
+        offset = args.get("offset") or 0
+        limit = args.get("limit") or MAX_LINES
+        found.append({"idx": i, "key": (path, offset, limit)})
+    return found
+
+
+def _clear_read_result(messages: list, item: dict, read_cache: dict) -> None:
+    """把一条读文件返回消息的正文换成占位符，并在缓存里把这段标成归档。
+
+    占位符带文件名和行段，模型日后要回看能精准重新定位；归档后这段就从「读过就挡」变成
+    「可重读（到上限）」，见 agent_tools 的重读规矩。
+
+    Args:
+        messages:   当前对话历史，原地改。
+        item:       _read_result_indices 给的一项，含 idx 和 key。
+        read_cache: 本仓库已读缓存，把这段标归档。
+    """
+    path, offset, limit = item["key"]
+    messages[item["idx"]]["content"] = _CLEARED_TMPL.format(
+        path=path or "(未知文件)", start=offset, end=offset + limit)
+    archive_segment(read_cache, item["key"])
+
+
+def _system_tokens(system: str) -> int:
+    """估一下 system prompt 本身多少 token，用来从整段历史里扣掉、只算工具返回那部分。"""
+    return estimate_tokens([{"content": system}])
+
+
+def _rolling_clean(messages: list, system: str, read_cache: dict,
+                   full_name: str, rnd: int, log: str, emit_log) -> dict | None:
+    """滚动清理：历史里 system 之外的部分超过触发线就清老的读文件返回，直到剩余压进目标。
+
+    先量 system 之外多少 token，没到 CLEAN_TRIGGER_TOKENS 直接返回 None（这轮不清）。到线了走
+    阶梯：先留最近 CLEAN_KEEP_START 个读文件返回、清更早的，量剩余够不够 CLEAN_TARGET_TOKENS；
+    不够就少留一个再清再量，一路减到留 1 个；留 1 个还超就把这最后一个正文截断到刚好压进目标。
+    清理只保命、绝不叫停探查，纯代码不调模型。
+
+    Args:
+        messages:   当前对话历史，原地改。
+        system:     本仓库的 system prompt，量长度时要从总量里扣掉。
+        read_cache: 本仓库已读缓存，清一段就归档一段。
+        full_name:  owner/name，日志和监控用。
+        rnd:        当前轮次，监控用。
+        log:        日志模式。
+        emit_log:   日志回调。
+    Returns:
+        这轮真清了就返回一份监控 dict（清了几个、当前状态），没到线不清返回 None。
+    """
+    sys_toks = _system_tokens(system)
+
+    def hist_tokens() -> int:
+        # 整段历史的 token 减去 system 那份，就是工具返回那部分
+        return max(estimate_tokens(messages) - sys_toks, 0)
+
+    if hist_tokens() < CLEAN_TRIGGER_TOKENS:
+        return None
+
+    items = _read_result_indices(messages)
+    cleared = 0
+
+    # 阶梯：留最近 keep 个、清更早的，从 CLEAN_KEEP_START 往下减，先把剩余压进目标的就停
+    for keep in range(CLEAN_KEEP_START, 0, -1):
+        to_clear = items[:max(len(items) - keep, 0)]
+        for it in to_clear:
+            if str(messages[it["idx"]].get("content", "")).startswith("(此处原为"):
+                continue
+            _clear_read_result(messages, it, read_cache)
+            cleared += 1
+        if hist_tokens() <= CLEAN_TARGET_TOKENS:
+            break
+
+    # 减到只留最近 1 个仍超目标：这最后一个自己就太大，把它正文截断到刚好压进目标
+    if hist_tokens() > CLEAN_TARGET_TOKENS and items:
+        last = messages[items[-1]["idx"]]
+        over = hist_tokens() - CLEAN_TARGET_TOKENS
+        # 按「4 字符约 1 token」把超出的 token 折回字符数，从尾部砍掉那么多
+        cut_chars = over * 4
+        body = str(last.get("content", ""))
+        if len(body) > cut_chars:
+            last["content"] = body[:len(body) - cut_chars] + "\n…（内容过长已截断，如需可重读后续）"
+
+    # 归档状态快照：当前所有读文件段各是 live 还是 archived、重读几次，逐条列出来。
+    # 这条日志走 emit_log 的按仓库通道，前端把它落进这个仓库自己那行探查日志里，多仓库并行时
+    # 各看各的，一眼看出这条循环压了多少、清了谁、谁被重读过
+    archived = sum(1 for r in read_cache.values() if r["state"] == "archived")
+    seg_lines = []
+    for (path, off, lim), rec in read_cache.items():
+        mark = "已归档" if rec["state"] == "archived" else "在上下文"
+        reread = f"，重读 {rec['rereads']} 次" if rec["rereads"] else ""
+        seg_lines.append(f"  · {path} 行 {off}-{off + lim}：{mark}{reread}")
+    detail = "\n".join(seg_lines)
+    _status(emit_log, full_name,
+            f"🧹 上下文清理[Round {rnd}]：本轮清了 {cleared} 个旧读文件返回，"
+            f"当前 {len(read_cache)} 段（{archived} 已归档 / {len(read_cache) - archived} 在上下文），"
+            f"剩余约 {hist_tokens()} tok\n{detail}", log)
+
+    return {"round": rnd, "cleared": cleared,
+            "total_segments": len(read_cache),
+            "archived": archived, "live": len(read_cache) - archived,
+            "hist_tokens": hist_tokens()}
 
 
 async def explore_one(full_name: str, system: str, gate_user: str, user: str,
@@ -260,8 +527,9 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
     # 单仓库同时在飞的 LLM 请求受它限；跨仓库总量另受 call_deepseek 里的全局闸限
     set_repo_sem()
 
-    # 本仓库专用的已读路径集合，read_file 读成功的记进去，同一段第二次读直接回「已读过」
-    read_cache: set = set()
+    # 本仓库专用的已读缓存，键是 (path, offset, limit)，值记这段的状态（live/archived）和重读次数。
+    # read_file 靠它去重和挡重读；滚动清理归档一段就在这里把它标 archived，放它被重读回来
+    read_cache: dict = {}
 
     # meter 计本仓库 token，从 gate 那次调用就开始算
     meter = TokenMeter()
@@ -298,7 +566,7 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
 
     # make_dispatch 把克隆目录和已读缓存绑进四个工具，guard 拦掉重复读 README 和根目录
     # 克隆跑完不删，留在 CLONE_DIR 给用户接着深入看，由 clear_clone_dir 统一清
-    dispatch = _guard_dispatch(make_dispatch(local_root, read_cache))
+    dispatch = _guard_dispatch(make_dispatch(local_root, read_cache), read_cache)
 
     # 对话起点：system 含项目六样资料，user 是Content Filter指令，后续每轮往这个列表末尾追加
     messages = [
@@ -319,6 +587,12 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
     nudged_mid = False
     nudged_stall = False
 
+    # 重复调用熔断：记上一次见到的调用指纹和它连续出现几次，同指纹连撞 DUP_CALL_LIMIT 次
+    # 就判死循环、强制交卷。dup_stop 一置就跟预算耗尽同路，逼模型直接出 JSON
+    last_fp = ""
+    dup_count = 0
+    dup_stop = False
+
     # 命中记忆：这仓库上次拆过、拆解存在记忆库里，直接拿现成的当 llm_out，跳过下面整个 explorer
     # 循环那二十次工具调用。存的拆解上次已过锚点审计，这里不再重审。gate 和克隆已经照跑，
     # 后面辩论照走（辩论对着这次的新需求现判，锚点审计对本地克隆核，都不受影响）
@@ -332,21 +606,18 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
     while not skip_explorer:
         rnd += 1
 
-        # budget_done 标记本轮最终 JSON 是预算耗尽逼出来的，那种情况没预算再重修
-        budget_done = False
-
-        # 工具次数用满了，追加逼停消息，用只输出 JSON 的模式逼模型直接给判断
-        if used >= MAX_TOOLS:
+        # 工具次数用满、或撞上重复调用熔断，追加逼停消息，用只输出 JSON 的模式逼模型直接给判断
+        if used >= MAX_TOOLS or dup_stop:
             if log == "ReAct":
                 _log_raw(full_name, f"===== Round {rnd} 逼停 =====", FORCE_STOP_MSG)
             else:
                 _visual(emit_log, full_name, f"Round {rnd}")
-                _visual(emit_log, full_name, f"⚠ 预算耗尽 ({MAX_TOOLS}次)，追加逼停消息")
+                why = "重复调用熔断" if dup_stop else f"预算耗尽 ({MAX_TOOLS}次)"
+                _visual(emit_log, full_name, f"⚠ {why}，追加逼停消息")
             messages.append({"role": "user", "content": FORCE_STOP_MSG})
             resp = await _call_final(messages, meter, model)
             _emit_token_line(emit_log, full_name, rnd, meter, log)
             llm_out = await _parse_final(messages, resp.choices[0].message.content or "", meter, model)
-            budget_done = True
         else:
             if log == "ReAct":
                 _log_raw(full_name, f"\n===== Round {rnd} 发给 LLM 的新增消息 =====", messages[-1])
@@ -373,6 +644,23 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
                         _visual(emit_log, full_name, "💭", msg.content)
                     for tc in msg.tool_calls:
                         _visual(emit_log, full_name, f"→ {tc.function.name}({tc.function.arguments})")
+
+                # 重复调用熔断：逐个过本轮调用的指纹，跟上次同就累加、不同就清零重记，
+                # 连撞 DUP_CALL_LIMIT 次判死循环。本轮调用照常执行完，下一轮轮首才逼停。
+                # 但被清理归档过的段的重读是系统逼出来的合理重读、指纹跟原读一样，不能算它死循环
+                for tc in msg.tool_calls:
+                    if _is_archived_reread(tc, read_cache):
+                        continue
+                    fp = _call_fp(tc)
+                    if fp == last_fp:
+                        dup_count += 1
+                    else:
+                        last_fp = fp
+                        dup_count = 1
+                    if dup_count >= DUP_CALL_LIMIT:
+                        dup_stop = True
+                        _visual(emit_log, full_name,
+                                f"🔁 同一调用连撞 {dup_count} 次，判死循环，下一轮强制收尾")
 
                 # 模型一轮可能发好几个工具调用，按顺序分配额度：没超的真执行，超的填占位
                 results_msgs: list = [None] * len(msg.tool_calls)
@@ -413,6 +701,10 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
                     else:
                         _visual(emit_log, full_name, f"🧭 预算过半 ({used}/{MAX_TOOLS})，注入盘点提醒")
                     messages.append({"role": "user", "content": MIDPOINT_MSG})
+
+                # 这轮的工具返回都追加进历史了，进下一轮前滚动清理一次：到线才清、清完压回目标，
+                # 清理只保命不叫停探查。清理内部把归档状态快照走 emit_log 落进这个仓库自己那行日志
+                _rolling_clean(messages, system, read_cache, full_name, rnd, log, emit_log)
                 continue
 
             # 模型不调工具了，这轮回复就是最终判断
@@ -422,22 +714,33 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
                 _visual(emit_log, full_name, "无工具调用，结论", msg.content)
             llm_out = await _parse_final(messages, msg.content or "", meter, model)
 
-        # 审计闸：本轮拿到一份最终 JSON，核对 key_designs 的 where 锚点
-        bad = _audit_anchors(local_root, llm_out)
-        if not bad:
-            break
+        # 审计闸：拿到最终 JSON，核对 key_designs 的 where 锚点。坏了进修复轮重查、再审计，
+        # 修复过仍坏就删点兜底。整个审计+修复收在这个内层循环里，不回主循环顶（回顶会撞上预算
+        # 耗尽的逼停，把修复轮辛苦重查的结果覆盖掉）
+        done_explorer = False
+        while True:
+            bad = _audit_anchors(local_root, llm_out)
+            if not bad:
+                done_explorer = True
+                break
 
-        # 已经重修过一次、或预算没了 → 不再问模型，代码删点兜底
-        if repaired or budget_done or used >= MAX_TOOLS:
-            dropped_names = sorted({b["name"] for b in bad})
-            _status(emit_log, full_name, f"🔧 锚点仍对不上 {len(bad)} 处，删点兜底：{dropped_names}", log)
-            llm_out = _drop_bad_designs(llm_out, bad)
-            break
+            # 已经修过一次 → 不再问模型，代码删点兜底
+            if repaired:
+                dropped_names = sorted({b["name"] for b in bad})
+                _status(emit_log, full_name, f"🔧 锚点仍对不上 {len(bad)} 处，删点兜底：{dropped_names}", log)
+                llm_out = _drop_bad_designs(llm_out, bad)
+                done_explorer = True
+                break
 
-        # 第一次对不上、还有预算 → 塞重修提示，继续循环让模型重出完整 JSON
-        repaired = True
-        _status(emit_log, full_name, f"🔧 锚点对不上 {len(bad)} 处，打回重修一次", log)
-        messages.append({"role": "user", "content": _repair_msg(bad)})
+            # 第一次对不上 → 进修复轮带独立额度重查锚点。探查预算耗尽也照修，REPAIR_BUDGET
+            # 是专供修复的独立额度，不受探查那 MAX_TOOLS 是否烧光影响
+            repaired = True
+            _status(emit_log, full_name, f"🔧 锚点对不上 {len(bad)} 处，进修复轮重查（额度 {REPAIR_BUDGET}）", log)
+            messages.append({"role": "user", "content": _repair_msg(bad)})
+            llm_out = await _repair_round(messages, dispatch, meter, model, full_name, log, emit_log)
+
+        if done_explorer:
+            break
 
     # 最终 JSON 彻底解析不出就标降级，对齐函数收到空内容会把判定全补 unknown，结构照样完整
     degraded = llm_out is None
@@ -482,7 +785,7 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
 
             # 分诊：判这份拆解够不够判这条，不够就开取证清单。日志攒进 triage_logs 稍后统一打
             triage_logs: list = []
-            tri = await _triage(system_debate, _fill_triage(triage_md, kp, standards), meter, model,
+            tri = await _triage(system_debate, _fill_triage(triage_md, kp, standards, output_language), meter, model,
                                 full_name, f"分诊[{kp_tag}]", log, triage_logs)
             need = tri.get("need", [])
 

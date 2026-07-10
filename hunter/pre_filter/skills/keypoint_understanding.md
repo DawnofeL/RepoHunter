@@ -22,7 +22,7 @@ description: 把一条用户手写的自然语言 keypoint 编译成可判定的
 
 # 输出
 
-只输出这一句标准，不要别的话。
+只输出这一句标准，不要别的话。标准用 {output_language} 书写（下面例子为示意写成中文，实际按 {output_language} 输出）。
 
 # 例子
 

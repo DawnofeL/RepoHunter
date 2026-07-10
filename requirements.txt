@@ -4,3 +4,4 @@ mcp
 pandas
 python-dotenv
 ipython
+tokenizers

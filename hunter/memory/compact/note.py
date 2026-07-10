@@ -1,10 +1,11 @@
 """
 会话笔记(session note)：后台把聊过的内容压成一份笔记存库，供压缩时零成本复用（S5 笔记层）。
 
-每聊完一轮在后台检查，新消息攒够 3 轮就拿旧笔记加新消息重写整份笔记，连同游标和一句简介
-成对落库。笔记覆盖到第几条由游标记着，压缩时游标之前的旧消息可被这份笔记顶替。攒轮触发、
-单飞补跑、失败不碰对话，全套照 extract 那边的做法。spawn_note 是入口，对话收完一轮调它。
-笔记三列加在 S2 的 chat_sessions 上，连库走共享 memory_db。
+每聊完一轮在后台检查，游标之后的新消息估出来的 token 数攒够阈值，就拿旧笔记加新消息重写
+整份笔记，连同游标和一句简介成对落库。笔记覆盖到第几条由游标记着，压缩时游标之前的旧消息
+可被这份笔记顶替。按 token 量触发（不是数条数）、单飞补跑、失败不碰对话，全套照 extract
+那边的做法。spawn_note 是入口，对话收完一轮调它。笔记三列加在 S2 的 chat_sessions 上，连库
+走共享 memory_db。
 """
 
 import asyncio
@@ -16,8 +17,9 @@ from hunter.config import call_deepseek, load_skill
 from hunter.memory.memory_db import _connect
 from hunter.memory.compact.tokens import estimate_tokens
 
-# 攒够多少条新消息才重写一次笔记，3 轮一问一答算 6 条
-NOTE_EVERY_MESSAGES = 6
+# 游标之后的新消息估出来的 token 数攒够这个数才重写一次笔记，不够就跳过继续攒，
+# 闲聊攒很久也攒不到就不触发，内容密的话几条就够，不用凑够特定条数
+NOTE_TOKEN_THRESHOLD = 1_500
 
 # 笔记后台任务的单飞状态：同时只跑一个，跑着时新触发压进 pending，跑完补一次。进程内驻留跨请求
 _note_running = False
@@ -130,24 +132,29 @@ def _parse_note(raw: str) -> dict | None:
     return None
 
 
-async def _run_note(session_id: str, messages: list[dict], model: str) -> None:
+async def _run_note(session_id: str, messages: list[dict], model: str,
+                    output_language: str = "简体中文") -> None:
     """跑一次笔记重写：读游标取新消息，够阈值就拿旧笔记加新消息重写整份，成功才挪游标。
 
     每次是重写整份不是往后接，输入旧笔记加游标之后的新消息，产出新的完整笔记。写库成功才把
     游标推到最新，失败游标不动、下次从老位置重来不漏。每步 dev.record 一份给监控抽屉。
+    笔记按 output_language 写；整份重写，会话中途切语言的话下次重写自然换过来。
     """
     prev = await asyncio.to_thread(get_note, session_id)
     cursor = prev["cursor"]
     new_msgs = messages[cursor:]
-    if len(new_msgs) < NOTE_EVERY_MESSAGES:
+    new_tokens = estimate_tokens(new_msgs)
+    if new_tokens < NOTE_TOKEN_THRESHOLD:
         # 监控：不够阈值这轮不写笔记，记一笔原因
         dev.record(session_id, "notes", {
             "fired": False,
-            "reason": f"游标 {cursor}，现有 {len(messages)} 条，新增 {len(new_msgs)} 条 < {NOTE_EVERY_MESSAGES}",
+            "reason": f"游标 {cursor}，新增 {len(new_msgs)} 条约 {new_tokens} tok < {NOTE_TOKEN_THRESHOLD}",
         })
         return
 
-    skill = load_skill("session_note").replace("{old_note}", prev["note"] or "（还没有笔记）")
+    skill = (load_skill("session_note")
+             .replace("{old_note}", prev["note"] or "（还没有笔记）")
+             .replace("{output_language}", output_language))
     convo = "\n\n".join(f"{m.get('role')}: {m.get('content')}" for m in new_msgs)
 
     resp = await call_deepseek(
@@ -178,23 +185,25 @@ async def _run_note(session_id: str, messages: list[dict], model: str) -> None:
     })
 
 
-async def _safe_note(session_id: str, messages: list[dict], model: str) -> None:
+async def _safe_note(session_id: str, messages: list[dict], model: str,
+                     output_language: str = "简体中文") -> None:
     """包一层 try/except，写笔记失败只打日志绝不影响对话，游标也不动、下次重来。"""
     try:
-        await _run_note(session_id, messages, model)
+        await _run_note(session_id, messages, model, output_language)
     except Exception:
         traceback.print_exc()
 
 
-async def _note_single_flight(session_id: str, messages: list[dict], model: str) -> None:
+async def _note_single_flight(session_id: str, messages: list[dict], model: str,
+                              output_language: str = "简体中文") -> None:
     """单飞：同时只跑一个笔记任务，跑着时新触发压进 pending 覆盖旧的，跑完拿最新的补一次。"""
     global _note_running, _note_pending
     if _note_running:
-        _note_pending = (session_id, messages, model)
+        _note_pending = (session_id, messages, model, output_language)
         return
     _note_running = True
     try:
-        await _safe_note(session_id, messages, model)
+        await _safe_note(session_id, messages, model, output_language)
         while _note_pending is not None:
             job = _note_pending
             _note_pending = None
@@ -203,10 +212,12 @@ async def _note_single_flight(session_id: str, messages: list[dict], model: str)
         _note_running = False
 
 
-def spawn_note(session_id: str, messages: list[dict], model: str) -> None:
+def spawn_note(session_id: str, messages: list[dict], model: str,
+               output_language: str = "简体中文") -> None:
     """一轮聊完起个后台任务重写笔记，不阻塞回答。任务引用存进 _bg_tasks 防被 GC。"""
     if not session_id or not messages:
         return
-    task = asyncio.create_task(_note_single_flight(session_id, list(messages), model))
+    task = asyncio.create_task(
+        _note_single_flight(session_id, list(messages), model, output_language))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)

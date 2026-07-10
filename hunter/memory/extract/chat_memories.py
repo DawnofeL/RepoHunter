@@ -14,7 +14,7 @@ from hunter.memory.memory_db import _connect, now_str
 from hunter.memory.extract.secret_scan import scan_and_redact
 
 # 一条记忆一行，把 CC 记忆文件头部的 name/description/type 和正文拍平成列。
-# type 是 user/feedback/project/reference/repo；name 唯一，update/delete 按它找行；
+# type 是 user/feedback/project/repo；name 唯一，update/delete 按它找行；
 # full_name/where_anchor 只有 repo 类才填。时间列用可读格式（memory_db.now_str）
 CREATE_CHAT_MEMORIES = """
 CREATE TABLE IF NOT EXISTS chat_memories (
@@ -36,8 +36,8 @@ CREATE_CHAT_MEMORIES_INDEX = """
 CREATE INDEX IF NOT EXISTS idx_chat_mem_full_name ON chat_memories(full_name)
 """
 
-# 四类通用记忆，注入时全量带上；repo 类不在此列，它按仓库名单独捞
-GENERAL_TYPES = ("user", "feedback", "project", "reference")
+# 三类通用记忆，注入时全量带上；repo 类不在此列，它按仓库名单独捞
+GENERAL_TYPES = ("user", "feedback", "project")
 
 
 def init_chat_memories() -> None:
@@ -171,7 +171,7 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def list_general() -> list[dict]:
-    """全量取四类通用记忆(user/feedback/project/reference)，注入时全带上。按更新时间倒序。"""
+    """全量取三类通用记忆(user/feedback/project)，注入时全带上。按更新时间倒序。"""
     marks = ",".join("?" for _ in GENERAL_TYPES)
     conn = _connect()
     try:

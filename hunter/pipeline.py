@@ -98,7 +98,7 @@ async def run_pipeline(params: dict):
         kp_list = queries.get("keypoints", [])
         standards: dict = {}
         if kp_list:
-            compiled = await Keypoint_Understanding(load_skill("keypoint_understanding"), kp_list)
+            compiled = await Keypoint_Understanding(load_skill("keypoint_understanding"), kp_list, output_language)
             standards = {c["keypoint"]: c["standard"] for c in compiled}
             yield _ev("keypoints_compiled", compiled=compiled)
 

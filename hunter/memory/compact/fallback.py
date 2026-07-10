@@ -19,9 +19,10 @@ def _extract_summary(raw: str) -> str | None:
     return text or None
 
 
-async def summarise_fallback(messages: list[dict], model: str) -> str | None:
+async def summarise_fallback(messages: list[dict], model: str,
+                             output_language: str = "简体中文") -> str | None:
     """现调一次模型把完整历史写成摘要，返回摘要正文，调用或解析失败返回 None。"""
-    skill = load_skill("compact_fallback")
+    skill = load_skill("compact_fallback").replace("{output_language}", output_language)
     convo = "\n\n".join(f"{m.get('role')}: {m.get('content')}" for m in messages)
     try:
         resp = await call_deepseek(

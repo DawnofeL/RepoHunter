@@ -26,6 +26,9 @@ MAX_GREP_HITS = 20
 # glob 找文件最多返回多少个路径
 MAX_GLOB_HITS = 100
 
+# 一段被清理归档后，最多允许模型重读几次。到上限再读也挡，防清理和重读来回拉锯的死循环
+MAX_REREAD = 2
+
 
 def _safe_join(root: str, rel: str) -> str | None:
     """
@@ -86,24 +89,35 @@ async def list_tree(root: str, path: str = "") -> str:
     return text or "（空目录）"
 
 
-async def read_file(root: str, read_cache: set, path: str,
+async def read_file(root: str, read_cache: dict, path: str,
                     offset: int = 0, limit: int = MAX_LINES) -> str:
     """
-    读克隆目录里一个文件，cat -n 风格带行号，支持 offset/limit 分段和已读去重。
+    读克隆目录里一个文件，cat -n 风格带行号，支持 offset/limit 分段和带状态的已读去重。
+
+    每段在 read_cache 里记一条状态：live（正文还在上下文里）或 archived（被滚动清理归档、
+    正文换成占位符了），归档的还记重读了几次。三种情况：没读过正常读、记 live；读过且 live
+    再读挡回「已读过」，防空转白烧钱；读过但 archived 放行重读（内容不在上下文里、重读有意义），
+    但到 MAX_REREAD 上限再读也挡，防清理和重读来回拉锯的死循环。
 
     Args:
         root:       克隆根目录绝对路径。
-        read_cache: 本仓库已读缓存，键是 (path, offset, limit)。
+        read_cache: 本仓库已读缓存，键是 (path, offset, limit)，值是 {"state", "rereads"}。
         path:       文件相对路径。
         offset:     起始行（从 0 起）。
         limit:      读多少行。
     Returns:
-        带行号的内容，行号从 offset+1 起；越界、不存在、读失败、已读过各返回对应提示。
+        带行号的内容，行号从 offset+1 起；越界、不存在、读失败、已读过、已达重读上限各返回对应提示。
     """
-    # 同一段读过直接回提示，不再开文件
+    # 同一段读过：live 的挡回不再读；archived 的放行重读，但到上限也挡
     key = (path, offset, limit)
-    if key in read_cache:
-        return f"该文件该段（{path} 行 {offset}-{offset + limit}）已读过，内容未变，略。"
+    rec = read_cache.get(key)
+    if rec is not None:
+        if rec["state"] == "live":
+            return f"该文件该段（{path} 行 {offset}-{offset + limit}）已读过，内容未变，略。"
+        # archived：内容已被清理出上下文，允许重读回来，但最多 MAX_REREAD 次
+        if rec["rereads"] >= MAX_REREAD:
+            return (f"该文件该段（{path} 行 {offset}-{offset + limit}）已归档且重读达上限，"
+                    "不再重复读取，请用现有信息收尾。")
 
     full = _safe_join(root, path)
     if full is None:
@@ -118,7 +132,12 @@ async def read_file(root: str, read_cache: set, path: str,
     except Exception as e:
         return f"读取失败: {e}"
 
-    read_cache.add(key)
+    # 头回读记成 live；重读归档段则回到 live 并把重读计数加一
+    if rec is None:
+        read_cache[key] = {"state": "live", "rereads": 0}
+    else:
+        rec["state"] = "live"
+        rec["rereads"] += 1
     lines = content.split("\n")
     chunk = lines[offset:offset + limit]
 
@@ -305,7 +324,39 @@ TOOL_SCHEMAS = [
 ]
 
 
-def make_dispatch(local_root: str, read_cache: set) -> dict:
+def archive_segment(read_cache: dict, key: tuple) -> None:
+    """把一段读文件记录标成归档：正文已被滚动清理出上下文，之后允许模型重读回来（限次）。
+
+    滚动清理每清掉一段读文件返回就调一次。归档只改状态、不动重读计数，让这段从「读过就挡」
+    变成「可重读（到上限为止）」。key 是 (path, offset, limit)，缓存里没有就不管（没读过的段不会被清）。
+
+    Args:
+        read_cache: 本仓库已读缓存。
+        key:        要归档的那段的键 (path, offset, limit)。
+    """
+    rec = read_cache.get(key)
+    if rec is not None:
+        rec["state"] = "archived"
+
+
+def is_archived_read(read_cache: dict, args: dict) -> bool:
+    """按一次 read_file 调用的参数，查这段是不是归档状态且还没读到重读上限。
+
+    给 guard 和死循环熔断用：被系统清理归档、模型又来重读的段，是合理重读、不该被挡也不该
+    算死循环。args 是模型填的读文件参数，缺省对齐 read_file 的默认值拼出那段的键。
+
+    Args:
+        read_cache: 本仓库已读缓存。
+        args:       一次 read_file 调用的参数 dict。
+    Returns:
+        这段已归档且重读没到上限返回 True，否则 False。
+    """
+    key = (args.get("path", ""), args.get("offset") or 0, args.get("limit") or MAX_LINES)
+    rec = read_cache.get(key)
+    return rec is not None and rec["state"] == "archived" and rec["rereads"] < MAX_REREAD
+
+
+def make_dispatch(local_root: str, read_cache: dict) -> dict:
     """把四个工具绑定到克隆目录，返回「工具名 → async 闭包」的调度表。
 
     四个闭包把 local_root 和 read_cache 固定进去，对外只收一个 args dict（LLM 填的
@@ -313,7 +364,7 @@ def make_dispatch(local_root: str, read_cache: set) -> dict:
 
     Args:
         local_root: 克隆根目录绝对路径。
-        read_cache: 这个仓库私有的已读缓存集合，传给 read_file 去重用。
+        read_cache: 这个仓库私有的已读缓存 dict，传给 read_file 去重和记状态用。
     Returns:
         dict，键是工具名（list_tree / read_file / grep_code / glob_files），值是 async 闭包。
     """

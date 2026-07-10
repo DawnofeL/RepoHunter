@@ -244,6 +244,70 @@
       "ws.cfg.model.ph": "留空用凭证页的模型",
       "ws.cfg.hint": "只作用于对话，左栏搜索仍用凭证页那套",
       "ws.cfg.ok": "确认",
+      "pi.recalled": "召回",
+      "pi.gauge": "上下文占用",
+      "pi.empty": "这轮没有记录到提示词。打开页面后聊的那几轮才有。",
+      "pi.title": "上一轮发给模型的提示词",
+      "pi.compact": "compact 压缩笔记（更早的对话已压缩成这份笔记）",
+      "pi.compacted": "本轮历史已压缩（{path}）：下面是压缩后注入模型的内容，完整对话在会话记录里",
+      "compact.note_replace": "笔记顶替",
+      "compact.summary_fallback": "摘要兜底",
+      "compact.hard_truncate_circuit": "熔断硬截断",
+      "compact.hard_truncate_failed": "摘要失败·硬截断",
+      "compact.reactive_truncate": "模型拒绝后硬截",
+      "ws.inject.tip": "注入对话",
+      "ws.avatar.tip": "查看这轮发给模型的提示词",
+      "dev.title": "开发者监控",
+      "dev.record": "记录本轮过程",
+      "dev.audit.btn": "历史审计",
+      "dev.monitor.btn": "开发者监控",
+      "dev.hint.live": "打开记录后，跟 AI 聊天时这里实时显示背后的 extract 记忆、会话笔记、上下文压缩。",
+      "dev.hint.nosession": "发一条消息开始对话后，这里自动开始监控。",
+      "dev.hint.watching": "监控本会话 {sid}。开关关着则不记录。",
+      "dev.st.note": "当前会话笔记",
+      "dev.st.nonote": "（还没建笔记，对话够长才建）",
+      "dev.st.session_mem": "本会话提取的记忆",
+      "dev.st.global_mem": "全局通用记忆",
+      "dev.st.empty": "（暂无）",
+      "dev.payload": "发给模型的完整 payload",
+      "dev.ex.notfired": "未提取：",
+      "dev.ex.saved": "落库",
+      "dev.ex.redacted": "打码",
+      "dev.ex.dropped": "编造丢弃",
+      "dev.ex.prompt": "提取提示词（含拼接）",
+      "dev.raw": "模型原始返回",
+      "dev.ex.actions": "解析出的动作",
+      "dev.ex.droppedfold": "被丢弃的（编造的仓库）",
+      "dev.nt.notfired": "未更新笔记：",
+      "dev.nt.covers": "覆盖到第",
+      "dev.nt.items": "条",
+      "dev.nt.prompt": "笔记提示词（含拼接）",
+      "dev.cp.label": "压缩：",
+      "dev.cp.from": "条压缩为",
+      "dev.cp.to": "条",
+      "dev.cp.failcount": "熔断计数",
+      "dev.cp.before": "压缩前",
+      "dev.cp.after": "压缩后",
+      "dev.rc.notfired": "未召回：",
+      "dev.rc.manifest": "清单",
+      "dev.rc.hitrepo": "命中仓库",
+      "dev.rc.hitmem": "命中记忆",
+      "dev.rc.ambiguous": "候选",
+      "dev.rc.manifestfold": "给挑选器的清单",
+      "dev.rc.picked": "挑中结果",
+      "dev.au.back.live": "返回实时",
+      "dev.au.back.list": "返回列表",
+      "dev.au.clear": "清空全部",
+      "dev.au.empty": "（暂无审计记录，打开监控开关后聊天才会落库）",
+      "dev.au.norecord": "（无记录）",
+      "dev.au.rows": "条",
+      "dev.au.del": "删除",
+      "dev.au.delconfirm.title": "删除审计",
+      "dev.au.delconfirm.msg": "删除这次会话的审计记录？此操作无法撤销。",
+      "dev.au.clearconfirm.title": "清空审计",
+      "dev.au.clearconfirm.msg": "清空全部审计记录？此操作无法撤销。",
+      "dev.au.confirm.del": "删除",
+      "dev.au.confirm.clear": "清空",
     },
     en: {
       "hud.sub": "GitHub Repo Discovery · Deep Ranking",
@@ -420,6 +484,70 @@
       "ws.cfg.model.ph": "Leave blank to use the credentials page model",
       "ws.cfg.hint": "Only affects chat — search on the left still uses the credentials page",
       "ws.cfg.ok": "Confirm",
+      "pi.recalled": "recalled",
+      "pi.gauge": "Context usage",
+      "pi.empty": "No prompt recorded for this turn. Only turns chatted after opening the page have one.",
+      "pi.title": "Prompt sent to the model last turn",
+      "pi.compact": "compact note (earlier conversation was compacted into this note)",
+      "pi.compacted": "History compacted this turn ({path}): below is what was injected into the model after compaction; the full conversation is in the session record",
+      "compact.note_replace": "note replace",
+      "compact.summary_fallback": "summary fallback",
+      "compact.hard_truncate_circuit": "hard truncate (circuit)",
+      "compact.hard_truncate_failed": "hard truncate (summary failed)",
+      "compact.reactive_truncate": "hard truncate after model refusal",
+      "ws.inject.tip": "Inject into chat",
+      "ws.avatar.tip": "View the prompt sent to the model this turn",
+      "dev.title": "Developer monitor",
+      "dev.record": "Record this turn",
+      "dev.audit.btn": "History audit",
+      "dev.monitor.btn": "Developer monitor",
+      "dev.hint.live": "Once recording is on, the extract memory, session notes and context compaction behind each chat turn show up here live.",
+      "dev.hint.nosession": "Send a message to start a conversation and monitoring begins automatically.",
+      "dev.hint.watching": "Watching session {sid}. Nothing is recorded while the switch is off.",
+      "dev.st.note": "Current session note",
+      "dev.st.nonote": "(No note yet; one is built once the conversation is long enough)",
+      "dev.st.session_mem": "Memories extracted this session",
+      "dev.st.global_mem": "Global shared memories",
+      "dev.st.empty": "(None)",
+      "dev.payload": "Full payload sent to model",
+      "dev.ex.notfired": "Not extracted: ",
+      "dev.ex.saved": "saved",
+      "dev.ex.redacted": "redacted",
+      "dev.ex.dropped": "dropped (fabricated)",
+      "dev.ex.prompt": "Extraction prompt (assembled)",
+      "dev.raw": "Raw model output",
+      "dev.ex.actions": "Parsed actions",
+      "dev.ex.droppedfold": "Dropped (fabricated repos)",
+      "dev.nt.notfired": "Note not updated: ",
+      "dev.nt.covers": "Covers up to message",
+      "dev.nt.items": "",
+      "dev.nt.prompt": "Note prompt (assembled)",
+      "dev.cp.label": "Compaction: ",
+      "dev.cp.from": "messages compacted to",
+      "dev.cp.to": "",
+      "dev.cp.failcount": "circuit count",
+      "dev.cp.before": "Before compaction",
+      "dev.cp.after": "After compaction",
+      "dev.rc.notfired": "Not recalled: ",
+      "dev.rc.manifest": "manifest",
+      "dev.rc.hitrepo": "hit repos",
+      "dev.rc.hitmem": "hit memories",
+      "dev.rc.ambiguous": "candidates",
+      "dev.rc.manifestfold": "Manifest given to selector",
+      "dev.rc.picked": "Picked result",
+      "dev.au.back.live": "Back to live",
+      "dev.au.back.list": "Back to list",
+      "dev.au.clear": "Clear all",
+      "dev.au.empty": "(No audit records; chats are only saved once the monitor switch is on)",
+      "dev.au.norecord": "(No records)",
+      "dev.au.rows": "records",
+      "dev.au.del": "Delete",
+      "dev.au.delconfirm.title": "Delete audit",
+      "dev.au.delconfirm.msg": "Delete the audit records for this session? This can't be undone.",
+      "dev.au.clearconfirm.title": "Clear audit",
+      "dev.au.clearconfirm.msg": "Clear all audit records? This can't be undone.",
+      "dev.au.confirm.del": "Delete",
+      "dev.au.confirm.clear": "Clear",
     },
   };
   let lang = localStorage.getItem("lang") || "zh";
@@ -783,7 +911,7 @@
       const head = card.querySelector(".rcard-head");
       const btn = document.createElement("button");
       btn.className = "ws-inject";
-      btn.title = "注入对话";
+      btn.title = t("ws.inject.tip");
       btn.textContent = "+";
       btn.addEventListener("click", (e) => { e.stopPropagation(); injectCtx(fn); });
       // 插在 caret 前，跟统计徽章一排
@@ -800,7 +928,7 @@
     chip.className = "ws-ctx-chip" + (recalled ? " ws-ctx-recalled" : "");
     chip.dataset.ctx = name;
     // 召回转正的芯片带个「召回」小标，标明是系统帮着捞进来的，不是用户手点的
-    chip.innerHTML = (recalled ? '<span class="ws-ctx-tag">召回</span> ' : "") +
+    chip.innerHTML = (recalled ? '<span class="ws-ctx-tag">' + esc(t("pi.recalled")) + '</span> ' : "") +
       esc(name.split("/").pop()) + ' <button title="' + esc(t("form.langrow.del")) + '">×</button>';
     chip.querySelector("button").addEventListener("click", () => {
       chip.remove();
@@ -882,7 +1010,7 @@
       const av = document.createElement("button");
       av.type = "button";
       av.className = "ws-avatar";
-      av.title = "查看这轮发给模型的提示词";
+      av.title = t("ws.avatar.tip");
       av.textContent = "🍃";
       av.addEventListener("click", () => openPromptInspector(wrap._prompt || null));
       wrap.appendChild(av);
@@ -929,6 +1057,35 @@
       "</div>";
   }
 
+  // 上下文占用条：这轮实际发给模型的 token 数 / 压缩触发线，算百分比画一条进度条。
+  // 越接近触发线颜色越深，直观看出还剩多少空间、什么时候会被压缩
+  function renderContextGauge(ev) {
+    if (ev.context_tokens == null || !ev.context_threshold) return "";
+    const pct = Math.min(100, Math.round((ev.context_tokens / ev.context_threshold) * 100));
+    const level = pct >= 90 ? "pi-gauge-high" : pct >= 60 ? "pi-gauge-mid" : "pi-gauge-low";
+    return '<div class="pi-gauge">' +
+      '<div class="pi-gauge-label">' + esc(t("pi.gauge")) + " <b>" + pct + "%</b>（" +
+      ev.context_tokens.toLocaleString() + " / " + ev.context_threshold.toLocaleString() + " tok）</div>" +
+      '<div class="pi-gauge-bar"><div class="pi-gauge-fill ' + level +
+      '" style="width:' + pct + '%"></div></div></div>';
+  }
+
+  // 拼一个可折叠的提示词框：默认闭合、只露前几行，右上角 ▽/△ 点开点收。
+  // cls 是配色类，labelHtml 是标签（已 esc），bodyHtml 是正文（已 esc）
+  function piBlock(cls, labelHtml, bodyHtml) {
+    return '<div class="pi-block ' + cls + ' pi-collapsed">' +
+      '<div class="pi-label">' + labelHtml +
+      '<button class="pi-fold" type="button" title="展开/收起">▽</button></div>' +
+      '<pre>' + bodyHtml + "</pre></div>";
+  }
+
+  // 框中框用：外框放的不是 pre 文本而是一段现成 html（比如嵌套的 compact 子框）。
+  // 外框自己不折叠，折叠交给里面的子框；标签右上角不放 ▽（没有正文可折）
+  function piBlockRaw(cls, labelHtml, innerHtml) {
+    return '<div class="pi-block ' + cls + '">' +
+      '<div class="pi-label">' + labelHtml + "</div>" + innerHtml + "</div>";
+  }
+
   // 提示词监控：点 agent 头像弹出这轮发给模型的完整提示词，按板块分色（人设、每个注入仓库、
   // user、assistant 各一色）。ev 是后端的 prompt 事件 {segments, messages}，没有就提示没记录到
   function openPromptInspector(ev) {
@@ -937,15 +1094,14 @@
     ov.className = "pi-overlay";
     let body;
     if (!ev) {
-      body = '<div class="pi-empty">这轮没有记录到提示词。打开页面后聊的那几轮才有。</div>';
+      body = '<div class="pi-empty">' + esc(t("pi.empty")) + "</div>";
     } else {
       // 这轮历史被压过就在顶部标一条，让人知道下面的 messages 是压缩后注入模型的样子、原文在会话记录里
-      const pathName = { note_replace: "笔记顶替", summary_fallback: "摘要兜底",
-        hard_truncate_circuit: "熔断硬截断", hard_truncate_failed: "摘要失败·硬截断",
-        reactive_truncate: "模型拒绝后硬截" }[ev.compact_path] || ev.compact_path;
+      const pathName = t("compact." + ev.compact_path) !== "compact." + ev.compact_path
+        ? t("compact." + ev.compact_path) : ev.compact_path;
+      const gauge = renderContextGauge(ev);
       const compactNote = ev.compacted
-        ? '<div class="pi-compacted">本轮历史已压缩（' + esc(pathName) +
-          "）：下面是压缩后注入模型的内容，完整对话在会话记录里</div>"
+        ? '<div class="pi-compacted">' + esc(t("pi.compacted").replace("{path}", pathName)) + "</div>"
         : "";
       const kindCls = { persona: "pi-persona", memory: "pi-memory", repo: "pi-repo",
         recall_memory: "pi-recall", recall_hint: "pi-recall" };
@@ -956,25 +1112,47 @@
         const cls = kindCls[s.kind] || "pi-repo";
         // 召回补进来的仓库段挂个「召回」小标，跟用户手动「+」注入的区分开
         const tag = s.recalled ? ' <span class="pi-recall-tag">召回</span>' : "";
-        return '<div class="pi-block ' + cls + (s.recalled ? " pi-recalled" : "") +
-          '"><div class="pi-label">' + esc(s.label) + tag +
-          "</div><pre>" + esc(s.text) + "</pre></div>";
+        return piBlock(cls + (s.recalled ? " pi-recalled" : ""), esc(s.label) + tag, esc(s.text));
       }).join("");
-      const msg = (ev.messages || []).map((m) => {
-        const cls = m.role === "user" ? "pi-user" : "pi-assistant";
-        return '<div class="pi-block ' + cls + '"><div class="pi-label">' + esc(m.role) +
-          "</div><pre>" + esc(m.content) + "</pre></div>";
-      }).join("");
-      body = compactNote + seg + msg + renderRecallInspect(recallDbg && recallDbg.recall);
+      const evMsgs = ev.messages || [];
+      // 压缩说明那条 user 渲染成框中框：外框是 user，里面胶囊标签 + 琥珀滚动框放笔记（照召回
+      // 面板那套设计语言），下面接紧跟其后那条真实 user 消息的正文（两条合成一个视觉框，说明
+      // 消息的话术不重复展示）。再往后的消息一律照常各自独立成框，assistant 不进外框
+      const parts = [];
+      for (let i = 0; i < evMsgs.length; i++) {
+        const m = evMsgs[i];
+        if (m._compact_summary) {
+          let inner = '<div class="pi-cn-tag">' + esc(t("pi.compact")) + "</div>" +
+            '<pre class="pi-cn-pre">' + esc(m._compact_summary) + "</pre>";
+          const next = evMsgs[i + 1];
+          if (next && next.role === "user") {
+            inner += '<pre class="pi-compact-tail">' + esc(next.content) + "</pre>";
+            i++;
+          }
+          parts.push(piBlockRaw("pi-user", "user", inner));
+          continue;
+        }
+        parts.push(piBlock(m.role === "user" ? "pi-user" : "pi-assistant", esc(m.role), esc(m.content)));
+      }
+      const msg = parts.join("");
+      body = gauge + compactNote + seg + msg + renderRecallInspect(recallDbg && recallDbg.recall);
     }
     ov.innerHTML =
-      '<div class="pi-box"><div class="pi-head"><span>上一轮发给模型的提示词</span>' +
+      '<div class="pi-box"><div class="pi-head"><span>' + esc(t("pi.title")) + "</span>" +
       '<button class="pi-close" type="button">×</button></div>' +
       '<div class="pi-body">' + body + "</div></div>";
     document.body.appendChild(ov);
     const close = () => ov.remove();
     ov.querySelector(".pi-close").addEventListener("click", close);
     ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+    // 每个框右上角 ▽/△ 点一下切换展开收起，只动它自己那个框
+    ov.querySelectorAll(".pi-fold").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const blk = btn.closest(".pi-block");
+        const collapsed = blk.classList.toggle("pi-collapsed");
+        btn.textContent = collapsed ? "▽" : "△";
+      });
+    });
   }
 
   // 发一条消息：读输入框 + wsContext，POST /chat，SSE 逐 delta 追加进 AI 气泡
@@ -1024,6 +1202,8 @@
           context: wsContext,
           // 带上会话 id，后端聊完按它触发提取记忆
           session_id: wsSessionId,
+          // 界面语言跟着请求走，决定助手回答语言和 system 包装文案（跟 /run 同一套取值）
+          output_language: lang === "en" ? "English" : "简体中文",
         }),
       });
       if (!res.ok) throw new Error("HTTP " + res.status);
@@ -1054,26 +1234,37 @@
             acc += ev.text || "";
             bubble.textContent = acc;
             $("ws-chat").scrollTop = $("ws-chat").scrollHeight;
+          } else if (ev.type === "done") {
+            // 这轮请求 + 这轮回复都写完了，真实占用数字才出来，补进这条气泡挂着的提示词里，
+            // 头像面板的占用条才会算上眼前这条回复本身，不是只算发请求前的历史
+            if (bubbleWrap && bubbleWrap._prompt) bubbleWrap._prompt.context_tokens = ev.context_tokens;
           } else if (ev.type === "compacted") {
             // 后端压了历史，把压缩后的数组收下，finally 里替换 wsMessages（不影响已显示的气泡）
             pendingCompact = ev.messages || null;
           } else if (ev.type === "error") {
-            acc += (acc ? "\n\n" : "") + "出错：" + (ev.message || "未知错误");
+            acc += (acc ? "\n\n" : "") + t("err.prefix") + (ev.message || t("err.unknown"));
             bubble.textContent = acc;
             bubble.classList.add("error");
           }
         }
       }
     } catch (e) {
-      bubble.textContent = (acc ? acc + "\n\n" : "") + "出错：" + String(e);
+      bubble.textContent = (acc ? acc + "\n\n" : "") + t("err.prefix") + String(e);
       bubble.classList.add("error");
     } finally {
       bubble.classList.remove("streaming");
       // 空回复（比如一上来就报错）不入历史，免得脏了后续多轮。把这轮的提示词分段挂在 assistant
       // 这条上一起存进会话，退出重进点头像还能看（含召回判断）；发给模型时上面会剥掉、只发 role/content
       if (acc) {
-        const seg = (bubbleWrap && bubbleWrap._prompt) ? bubbleWrap._prompt.segments : null;
-        wsMessages.push({ role: "assistant", content: acc, prompt: seg ? { segments: seg } : null });
+        const p = (bubbleWrap && bubbleWrap._prompt) || null;
+        // 存进历史的 prompt 除了分段，还要带上这轮的对话消息、压缩状态和上下文占用条要用的两个数字，
+        // 不然退出重进点头像，对话消息那块是空的、占用条也会因为字段是 null 而不显示
+        const prompt = p ? {
+          segments: p.segments, messages: p.messages,
+          compacted: p.compacted, compact_path: p.compact_path,
+          context_tokens: p.context_tokens, context_threshold: p.context_threshold,
+        } : null;
+        wsMessages.push({ role: "assistant", content: acc, prompt });
       }
       wsSending = false;
       $("ws-send").disabled = false;
@@ -2279,8 +2470,8 @@
     devSid = wsSessionId;
     $("dev-feed").innerHTML = "";
     $("dev-state").innerHTML = "";
-    if (!devSid) { $("dev-hint").textContent = "发一条消息开始对话后，这里自动开始监控。"; return; }
-    $("dev-hint").textContent = "监控本会话 " + devSid + "。开关关着则不记录。";
+    if (!devSid) { $("dev-hint").textContent = t("dev.hint.nosession"); return; }
+    $("dev-hint").textContent = t("dev.hint.watching").replace("{sid}", devSid);
     try {
       const snap = await (await fetch("/chat/dev/" + encodeURIComponent(devSid))).json();
       $("dev-toggle").checked = !!snap.enabled;
@@ -2322,12 +2513,12 @@
     const memLine = (x) => '<div class="dev-meta">· [' + devEsc(x.type) + "] <b>" + devEsc(x.name) +
       "</b>：" + devEsc(x.content || "") + "</div>";
     $("dev-state").innerHTML =
-      '<div class="dev-state-h">当前会话笔记</div>' +
-      (note ? '<div class="dev-pre">' + devEsc(note) + "</div>" : '<div class="dev-skip">（还没建笔记，对话够长才建）</div>') +
-      '<div class="dev-state-h">本会话提取的记忆 (' + sm.length + ")</div>" +
-      (sm.length ? sm.map(memLine).join("") : '<div class="dev-skip">（暂无）</div>') +
-      '<div class="dev-state-h">全局通用记忆 (' + gm.length + ")</div>" +
-      (gm.length ? gm.map(memLine).join("") : '<div class="dev-skip">（暂无）</div>');
+      '<div class="dev-state-h">' + esc(t("dev.st.note")) + "</div>" +
+      (note ? '<div class="dev-pre">' + devEsc(note) + "</div>" : '<div class="dev-skip">' + esc(t("dev.st.nonote")) + "</div>") +
+      '<div class="dev-state-h">' + esc(t("dev.st.session_mem")) + " (" + sm.length + ")</div>" +
+      (sm.length ? sm.map(memLine).join("") : '<div class="dev-skip">' + esc(t("dev.st.empty")) + "</div>") +
+      '<div class="dev-state-h">' + esc(t("dev.st.global_mem")) + " (" + gm.length + ")</div>" +
+      (gm.length ? gm.map(memLine).join("") : '<div class="dev-skip">' + esc(t("dev.st.empty")) + "</div>");
   }
 
   function renderDevRecord(rec, feed) {
@@ -2338,48 +2529,47 @@
     if (rec.kind === "context") {
       const tk = rec.tokens || {};
       html += '<div class="dev-meta"><b>' + devEsc(rec.model) + "</b> · " + (rec.elapsed_ms || 0) + "ms · " +
-        "prompt <b>" + (tk.prompt != null ? tk.prompt : "?") + "</b> / 出 " + (tk.completion != null ? tk.completion : "?") +
-        " / 总 " + (tk.total != null ? tk.total : "?") +
-        (tk.cache_hit != null ? " · 缓存命中 <b>" + tk.cache_hit + "</b>/未命中 " + tk.cache_miss : "") + "</div>";
-      html += devFold("发给模型的完整 payload", devJson(rec.payload));
+        "prompt <b>" + (tk.prompt != null ? tk.prompt : "?") + "</b> / out " + (tk.completion != null ? tk.completion : "?") +
+        " / total " + (tk.total != null ? tk.total : "?") +
+        (tk.cache_hit != null ? " · cache <b>" + tk.cache_hit + "</b>/miss " + tk.cache_miss : "") + "</div>";
+      html += devFold(t("dev.payload"), devJson(rec.payload));
     } else if (rec.kind === "extract") {
       if (!rec.fired) {
-        html += '<div class="dev-skip">未提取：' + devEsc(rec.reason) + "</div>";
+        html += '<div class="dev-skip">' + esc(t("dev.ex.notfired")) + devEsc(rec.reason) + "</div>";
       } else {
         const st = rec.stat || {};
-        html += '<div class="dev-meta">落库 +' + (st.added || 0) + " ~" + (st.updated || 0) + " -" + (st.deleted || 0) +
-          " · 打码 " + (st.redacted || 0) + " · 编造丢弃 " + ((rec.dropped || []).length) + "</div>";
-        html += devFold("提取提示词（含拼接）", devJson(rec.prompt));
-        html += devFold("模型原始返回", rec.raw || "");
-        html += devFold("解析出的动作", devJson(rec.actions));
-        if ((rec.dropped || []).length) html += devFold("被丢弃的（编造的仓库）", devJson(rec.dropped));
+        html += '<div class="dev-meta">' + esc(t("dev.ex.saved")) + " +" + (st.added || 0) + " ~" + (st.updated || 0) + " -" + (st.deleted || 0) +
+          " · " + esc(t("dev.ex.redacted")) + " " + (st.redacted || 0) + " · " + esc(t("dev.ex.dropped")) + " " + ((rec.dropped || []).length) + "</div>";
+        html += devFold(t("dev.ex.prompt"), devJson(rec.prompt));
+        html += devFold(t("dev.raw"), rec.raw || "");
+        html += devFold(t("dev.ex.actions"), devJson(rec.actions));
+        if ((rec.dropped || []).length) html += devFold(t("dev.ex.droppedfold"), devJson(rec.dropped));
       }
     } else if (rec.kind === "notes") {
       if (!rec.fired) {
-        html += '<div class="dev-skip">未更新笔记：' + devEsc(rec.reason) + "</div>";
+        html += '<div class="dev-skip">' + esc(t("dev.nt.notfired")) + devEsc(rec.reason) + "</div>";
       } else {
-        html += '<div class="dev-meta">覆盖到第 <b>' + rec.notes_cursor + "</b> 条 · " + rec.notes_tokens + " tok</div>";
-        html += devFold("笔记提示词（含拼接）", devJson(rec.prompt));
+        html += '<div class="dev-meta">' + esc(t("dev.nt.covers")) + " <b>" + rec.notes_cursor + "</b> " + esc(t("dev.nt.items")) + " · " + rec.notes_tokens + " tok</div>";
+        html += devFold(t("dev.nt.prompt"), devJson(rec.prompt));
         html += '<div class="dev-pre">' + devEsc(rec.notes || "") + "</div>";
       }
     } else if (rec.kind === "compact") {
-      const path = { note_replace: "笔记顶替", summary_fallback: "摘要兜底",
-        hard_truncate_circuit: "熔断硬截断", hard_truncate_failed: "摘要失败·硬截断",
-        reactive_truncate: "模型拒绝后硬截" }[rec.path] || rec.path;
-      html += '<div class="dev-meta">压缩：<b>' + devEsc(path) + "</b> · " + (rec.before || []).length +
-        " 条压缩为 " + (rec.after || []).length + " 条 · 熔断计数 " + (rec.fail_count || 0) + "</div>";
-      html += devFold("压缩前", devJson(rec.before));
-      html += devFold("压缩后", devJson(rec.after));
+      const path = t("compact." + rec.path) !== "compact." + rec.path
+        ? t("compact." + rec.path) : rec.path;
+      html += '<div class="dev-meta">' + esc(t("dev.cp.label")) + "<b>" + devEsc(path) + "</b> · " + (rec.before || []).length +
+        " " + esc(t("dev.cp.from")) + " " + (rec.after || []).length + " " + esc(t("dev.cp.to")) + " · " + esc(t("dev.cp.failcount")) + " " + (rec.fail_count || 0) + "</div>";
+      html += devFold(t("dev.cp.before"), devJson(rec.before));
+      html += devFold(t("dev.cp.after"), devJson(rec.after));
     } else if (rec.kind === "recall") {
       if (!rec.fired) {
-        html += '<div class="dev-skip">未召回：' + devEsc(rec.reason) + "</div>";
+        html += '<div class="dev-skip">' + esc(t("dev.rc.notfired")) + devEsc(rec.reason) + "</div>";
       } else {
-        html += '<div class="dev-meta">清单 <b>' + (rec.manifest || []).length + "</b> 条 · 命中仓库 " +
-          (rec.hit_repos || []).length + " · 命中记忆 " + (rec.hit_memories || []).length +
-          " · 候选 " + (rec.ambiguous || []).length + "</div>";
-        html += devFold("给挑选器的清单", devJson(rec.manifest));
-        html += devFold("模型原始返回", rec.raw || "");
-        html += devFold("挑中结果", devJson({ picks: rec.picks, ambiguous: rec.ambiguous,
+        html += '<div class="dev-meta">' + esc(t("dev.rc.manifest")) + " <b>" + (rec.manifest || []).length + "</b> · " + esc(t("dev.rc.hitrepo")) + " " +
+          (rec.hit_repos || []).length + " · " + esc(t("dev.rc.hitmem")) + " " + (rec.hit_memories || []).length +
+          " · " + esc(t("dev.rc.ambiguous")) + " " + (rec.ambiguous || []).length + "</div>";
+        html += devFold(t("dev.rc.manifestfold"), devJson(rec.manifest));
+        html += devFold(t("dev.raw"), rec.raw || "");
+        html += devFold(t("dev.rc.picked"), devJson({ picks: rec.picks, ambiguous: rec.ambiguous,
           hit_repos: rec.hit_repos, hit_memories: rec.hit_memories }));
       }
     }
@@ -2416,7 +2606,7 @@
     $("dev-audit-list").hidden = false;
     $("dev-audit-feed").hidden = true;
     $("dev-audit-feed").innerHTML = "";
-    $("dev-audit-back").textContent = "返回实时";
+    $("dev-audit-back").textContent = t("dev.au.back.live");
     $("dev-audit-clear").hidden = false;
     loadAuditList();
   }
@@ -2426,7 +2616,7 @@
     try { items = (await (await fetch("/chat/dev/audit")).json()).items || []; } catch (e) {}
     const list = $("dev-audit-list");
     if (!items.length) {
-      list.innerHTML = '<div class="dev-skip">（暂无审计记录，打开监控开关后聊天才会落库）</div>';
+      list.innerHTML = '<div class="dev-skip">' + esc(t("dev.au.empty")) + "</div>";
       return;
     }
     list.innerHTML = "";
@@ -2435,14 +2625,14 @@
       row.className = "dev-audit-row";
       row.innerHTML =
         '<span class="dev-audit-sid">' + devEsc(it.session_id) + "</span>" +
-        '<span class="dev-audit-meta">' + it.count + " 条 · " + fmtTime(it.last_ts) + "</span>" +
-        '<button class="dev-audit-del" title="删除">×</button>';
+        '<span class="dev-audit-meta">' + it.count + " " + esc(t("dev.au.rows")) + " · " + fmtTime(it.last_ts) + "</span>" +
+        '<button class="dev-audit-del" title="' + esc(t("dev.au.del")) + '">×</button>';
       row.addEventListener("click", () => openAuditSession(it.session_id));
       row.querySelector(".dev-audit-del").addEventListener("click", async (e) => {
         e.stopPropagation();
         const r = await openConfirm({
-          title: "删除审计", message: "删除这次会话的审计记录？此操作无法撤销。",
-          confirmLabel: "删除", showDontAsk: false,
+          title: t("dev.au.delconfirm.title"), message: t("dev.au.delconfirm.msg"),
+          confirmLabel: t("dev.au.confirm.del"), showDontAsk: false,
         });
         if (!r.ok) return;
         await fetch("/chat/dev/audit/" + encodeURIComponent(it.session_id), { method: "DELETE" });
@@ -2459,11 +2649,11 @@
     const feed = $("dev-audit-feed");
     feed.hidden = false;
     feed.innerHTML = "";
-    $("dev-audit-back").textContent = "返回列表";
+    $("dev-audit-back").textContent = t("dev.au.back.list");
     $("dev-audit-clear").hidden = true;
     let records = [];
     try { records = (await (await fetch("/chat/dev/audit/" + encodeURIComponent(sid))).json()).records || []; } catch (e) {}
-    if (!records.length) { feed.innerHTML = '<div class="dev-skip">（无记录）</div>'; return; }
+    if (!records.length) { feed.innerHTML = '<div class="dev-skip">' + esc(t("dev.au.norecord")) + "</div>"; return; }
     records.forEach((rec) => renderDevRecord(rec, feed));
   }
 
@@ -2471,8 +2661,8 @@
   $("dev-audit-back")?.addEventListener("click", () => { if (auditSid) showAuditList(); else backToLive(); });
   $("dev-audit-clear")?.addEventListener("click", async () => {
     const r = await openConfirm({
-      title: "清空审计", message: "清空全部审计记录？此操作无法撤销。",
-      confirmLabel: "清空", showDontAsk: false,
+      title: t("dev.au.clearconfirm.title"), message: t("dev.au.clearconfirm.msg"),
+      confirmLabel: t("dev.au.confirm.clear"), showDontAsk: false,
     });
     if (!r.ok) return;
     await fetch("/chat/dev/audit", { method: "DELETE" });

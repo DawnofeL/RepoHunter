@@ -30,12 +30,20 @@ _MAX_FAIL = 2
 # 进程内按会话记兜底连续失败次数，压缩成功归零
 _fail_count: dict = {}
 
-# 压缩后那条说明消息的话术：告诉模型这是延续、别复述、直接接着聊。用 replace 填笔记，避开花括号
+# 压缩后那条说明消息的话术：告诉模型这是延续、别复述、直接接着聊。用 replace 填笔记，避开花括号。
+# 中英各一套，按 output_language 挑，说明消息的语言跟界面语言一致，免得英文对话里插一段中文把模型带偏
 _SUMMARY_HEADER = (
     "这段对话从更早的部分延续而来，下面的笔记覆盖了被压缩掉的前半段：\n\n"
     "{summary}\n\n"
     "最近的消息原样保留在后面。直接接着聊，不要跟用户确认这份笔记、不要复述聊过的内容、"
     "不要说「我接着上面」之类的开场，就当对话没断过继续。笔记里没提到的细节别硬编，需要就问用户。"
+)
+_SUMMARY_HEADER_EN = (
+    "This conversation continues from an earlier part. The note below covers the compacted first half:\n\n"
+    "{summary}\n\n"
+    "The most recent messages are kept as-is after this. Just keep chatting: don't confirm this note "
+    "with the user, don't repeat what was already discussed, don't open with anything like "
+    "\"continuing from above\". Don't make up details the note doesn't mention; ask the user if needed."
 )
 
 
@@ -66,13 +74,19 @@ def _expand_keep(messages: list[dict], start: int) -> int:
     return _align_user(messages, i)
 
 
-def _assemble(summary: str, kept: list[dict]) -> list[dict]:
-    """拼压缩后的消息：一条包着笔记/摘要的 user 说明消息，后面接原样保留的最近消息。"""
-    header = {"role": "user", "content": _SUMMARY_HEADER.replace("{summary}", summary)}
+def _assemble(summary: str, kept: list[dict], output_language: str = "简体中文") -> list[dict]:
+    """拼压缩后的消息：一条包着笔记/摘要的 user 说明消息，后面接原样保留的最近消息。
+
+    说明消息多挂一个 _compact_summary 字段存纯笔记正文，只给前端监控单独渲染成 compact 框用；
+    发给模型前 session 那层会把下划线开头的字段剥掉，不会进 payload。
+    """
+    tmpl = _SUMMARY_HEADER_EN if output_language == "English" else _SUMMARY_HEADER
+    header = {"role": "user", "content": tmpl.replace("{summary}", summary),
+              "_compact_summary": summary}
     return [header] + kept
 
 
-def _try_note_compact(messages: list[dict], note: dict) -> list[dict] | None:
+def _try_note_compact(messages: list[dict], note: dict, output_language: str = "简体中文") -> list[dict] | None:
     """用笔记压缩，过四道检查：笔记非空、游标在范围、保留段非空、压完低于触发线。任一不过给 None。"""
     text = (note.get("note") or "").strip()
     cursor = note.get("cursor") or 0
@@ -84,7 +98,7 @@ def _try_note_compact(messages: list[dict], note: dict) -> list[dict] | None:
     kept = messages[start:]
     if not kept:
         return None
-    out = _assemble(text, kept)
+    out = _assemble(text, kept, output_language)
     if estimate_tokens(out) >= COMPACT_THRESHOLD:
         return None
     return out
@@ -110,12 +124,14 @@ def _record_compact(session_id: str, path: str, before: list[dict], after: list[
     })
 
 
-async def maybe_compact(session_id: str, messages: list[dict], model: str) -> tuple[list[dict], bool, str]:
+async def maybe_compact(session_id: str, messages: list[dict], model: str,
+                        output_language: str = "简体中文") -> tuple[list[dict], bool, str]:
     """回答前试压缩：没到线原样返回；到线先笔记、再兜底、最后硬截。
 
     返回（可能压过的消息，压没压，走的哪条路径）。path 在没压缩时是空串，压了就是那条路径的
     标识（note_replace / summary_fallback / hard_truncate_circuit / hard_truncate_failed），
-    session 那层拿它塞进 prompt 事件，让点头像时看得出这轮是压过的。
+    session 那层拿它塞进 prompt 事件，让点头像时看得出这轮是压过的。output_language 决定
+    压缩说明消息和兜底摘要用什么语言写。
     """
     if estimate_tokens(messages) < COMPACT_THRESHOLD:
         return messages, False, ""
@@ -127,18 +143,18 @@ async def maybe_compact(session_id: str, messages: list[dict], model: str) -> tu
         return out, True, "hard_truncate_circuit"
 
     note = await asyncio.to_thread(get_note, session_id) if session_id else {"note": "", "cursor": 0}
-    kept = _try_note_compact(messages, note)
+    kept = _try_note_compact(messages, note, output_language)
     if kept is not None:
         _fail_count.pop(session_id, None)
         _record_compact(session_id, "note_replace", messages, kept)
         return kept, True, "note_replace"
 
     # 笔记不可用，现写一份摘要兜底
-    summary = await summarise_fallback(messages, model)
+    summary = await summarise_fallback(messages, model, output_language)
     if summary:
         _fail_count.pop(session_id, None)
         start = _expand_keep(messages, len(messages))
-        out = _assemble(summary, messages[start:])
+        out = _assemble(summary, messages[start:], output_language)
         _record_compact(session_id, "summary_fallback", messages, out)
         return out, True, "summary_fallback"
 
