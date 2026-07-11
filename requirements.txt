@@ -5,3 +5,6 @@ pandas
 python-dotenv
 ipython
 tokenizers
+fastapi
+uvicorn[standard]
+sse-starlette

@@ -98,8 +98,9 @@ def save_run(params: dict, ranked: list[dict], total: int, cost: dict,
     finally:
         conn.close()
 
-    # run 行落好、拿到 id，再把这批仓库 upsert 进仓库账本，本次搜索追进各自 seen_runs 时间线
-    repo_store.upsert_repos(ranked, run_id, ts, keypoints)
+    # run 行落好、拿到 id，再把这批仓库 upsert 进仓库账本，本次搜索追进各自 seen_runs 时间线。
+    # 拆解按这次搜索的语言存进包里对应那格，不碰别的语言那格
+    repo_store.upsert_repos(ranked, run_id, ts, keypoints, params.get("output_language", "简体中文"))
     return run_id
 
 
@@ -143,10 +144,11 @@ def get_run(qid: int) -> dict | None:
     for col in JSON_COLS:
         d[col] = json.loads(d[col]) if d.get(col) else ([] if col != "process" else None)
 
-    # results 只存了仓库名不含拆解，按名字一次取回所有拆解 JOIN 回去，拼成前端认识的完整 ranked
+    # results 只存了仓库名不含拆解，按名字一次取回所有拆解 JOIN 回去，拼成前端认识的完整 ranked。
+    # 按这次搜索当时的语言取对应那格拆解，回放的语言跟当时一致
     results = d.pop("results")
     names = [r.get("full_name", "") for r in results if r.get("full_name")]
-    diss_map = repo_store.get_dissections(names)
+    diss_map = repo_store.get_dissections(names, d.get("output_language") or "简体中文")
     for r in results:
         r["dissection"] = diss_map.get(r.get("full_name", ""), {})
     d["ranked"] = results

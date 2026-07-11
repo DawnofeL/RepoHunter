@@ -93,9 +93,12 @@ def _general_index(rows: list[dict], t: dict = _TEXT_ZH) -> str:
     return "\n".join(lines)
 
 
-def _repo_block(full_name: str, t: dict = _TEXT_ZH) -> str:
-    """拼一个仓库块：元数据（star/体积）+ 拆解 + 之前聊过的事实 + 被搜到的记录。没拆过或没内容的返回空串。"""
-    mem = history.get_memory(full_name)
+def _repo_block(full_name: str, t: dict = _TEXT_ZH, output_language: str = "简体中文") -> str:
+    """拼一个仓库块：元数据（star/体积）+ 拆解 + 之前聊过的事实 + 被搜到的记录。没拆过或没内容的返回空串。
+
+    拆解按当前对话语言取对应那格，没有那格就退到有哪份用哪份（模型会用当前语言转述、用户看不到原文）。
+    """
+    mem = history.get_memory(full_name, output_language)
     if not mem:
         return ""
     d = mem.get("dissection") or {}
@@ -190,7 +193,8 @@ def _recall_done(segs: list[dict], debug: dict, session_id: str, t: dict = _TEXT
 
 
 async def _recall_segments(generals: list[dict], injected: set, messages: list[dict],
-                           model: str, session_id: str = "", t: dict = _TEXT_ZH) -> list[dict]:
+                           model: str, session_id: str = "", t: dict = _TEXT_ZH,
+                           output_language: str = "简体中文") -> list[dict]:
     """跑一次召回，把挑中的仓库拆解、相关记忆正文、歧义候选拼成补充段，末尾再挂一段召回判断。
 
     仓库命中补全量拆解段（标 recalled，前面加一行「N 天前分析」提示可能过时）；记忆命中把正文合成
@@ -217,10 +221,10 @@ async def _recall_segments(generals: list[dict], injected: set, messages: list[d
     for name in result["picks"]:
         kind = kind_map.get(name)
         if kind == "repo":
-            block = _repo_block(name, t)
+            block = _repo_block(name, t, output_language)
             if not block:
                 continue
-            mem = history.get_memory(name) or {}
+            mem = history.get_memory(name, output_language) or {}
             days = _days_ago(mem.get("analysed_at"), t)
             text = t["snapshot"].format(days=days) + f"\n{block}"
             segs.append({"label": name, "kind": "repo", "text": text, "recalled": True})
@@ -298,11 +302,11 @@ async def build_segments(context: list[str], messages: list[dict] | None = None,
         segs.append({"label": t["lbl_memory"], "kind": "memory", "text": idx})
     injected = set(context or [])
     for fn in (context or []):
-        block = _repo_block(fn, t)
+        block = _repo_block(fn, t, output_language)
         if block:
             segs.append({"label": fn, "kind": "repo", "text": block})
     if messages and model:
-        segs += await _recall_segments(generals, injected, messages, model, session_id, t)
+        segs += await _recall_segments(generals, injected, messages, model, session_id, t, output_language)
     return segs
 
 
@@ -327,11 +331,3 @@ def segments_to_system(segments: list[dict], output_language: str = "简体中�
     if hints:
         system += "\n\n" + "\n\n".join(hints)
     return system
-
-
-async def build_system(context: list[str], messages: list[dict] | None = None,
-                       model: str = "", session_id: str = "",
-                       output_language: str = "简体中文") -> str:
-    """拼这轮对话的完整 system 字符串（人设 + 记忆索引 + 注入仓库 + 召回）。分段版是 build_segments。"""
-    segs = await build_segments(context, messages, model, session_id, output_language)
-    return segments_to_system(segs, output_language)

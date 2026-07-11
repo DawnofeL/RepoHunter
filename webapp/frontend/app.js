@@ -257,6 +257,21 @@
       "compact.reactive_truncate": "模型拒绝后硬截",
       "ws.inject.tip": "注入对话",
       "ws.avatar.tip": "查看这轮发给模型的提示词",
+      "ws.input.ph": "给 AI 发消息…",
+      "ws.send": "发",
+      "hud.workbench": "🔬 工作台",
+      "pi.fold.tip": "展开/收起",
+      "rc.title": "小模型提示词 + 输出（挑仓库用，区别于上面主模型）",
+      "rc.skip": "这轮没跑召回：",
+      "rc.none": "无",
+      "rc.pickfrom.a": "从 ",
+      "rc.pickfrom.b": " 条候选里挑：",
+      "rc.hitrepo": "命中仓库 ",
+      "rc.hitmem": "　命中记忆 ",
+      "rc.ambiguous": "　分不清·会反问 ",
+      "rc.sub.sys": "提示词注入 · system（挑选规则）",
+      "rc.sub.user": "提示词注入 · user（候选清单 + 最近对话）",
+      "rc.answer": "小模型的回答（它最终挑的结果）",
       "dev.title": "开发者监控",
       "dev.record": "记录本轮过程",
       "dev.audit.btn": "历史审计",
@@ -497,6 +512,21 @@
       "compact.reactive_truncate": "hard truncate after model refusal",
       "ws.inject.tip": "Inject into chat",
       "ws.avatar.tip": "View the prompt sent to the model this turn",
+      "ws.input.ph": "Message the AI…",
+      "ws.send": "Send",
+      "hud.workbench": "🔬 Workbench",
+      "pi.fold.tip": "Expand/collapse",
+      "rc.title": "Small-model prompt + output (for repo selection, distinct from the main model above)",
+      "rc.skip": "No recall this turn: ",
+      "rc.none": "none",
+      "rc.pickfrom.a": "Picking from ",
+      "rc.pickfrom.b": " candidates: ",
+      "rc.hitrepo": "hit repos ",
+      "rc.hitmem": "　hit memories ",
+      "rc.ambiguous": "　ambiguous · will ask ",
+      "rc.sub.sys": "Prompt injected · system (selection rules)",
+      "rc.sub.user": "Prompt injected · user (candidate list + recent chat)",
+      "rc.answer": "Small model's answer (what it finally picked)",
       "dev.title": "Developer monitor",
       "dev.record": "Record this turn",
       "dev.audit.btn": "History audit",
@@ -1028,14 +1058,14 @@
   // r 是 recall_debug 段的 recall 数据；没跑召回或被跳过门拦下就说明原因
   function renderRecallInspect(r) {
     if (!r) return "";
-    const tag = '<div class="pi-rc-tag">小模型提示词 + 输出（挑仓库用，区别于上面主模型）</div>';
+    const tag = '<div class="pi-rc-tag">' + esc(t("rc.title")) + "</div>";
     if (!r.fired) {
       return '<div class="pi-block pi-recall pi-rc-inspect">' + tag +
-        '<div class="pi-rc-skip">这轮没跑召回：' + esc(r.reason || "") + "</div></div>";
+        '<div class="pi-rc-skip">' + esc(t("rc.skip")) + esc(r.reason || "") + "</div></div>";
     }
     const chips = (arr, cls) => (arr && arr.length)
       ? arr.map((x) => '<span class="pi-rc ' + cls + '">' + esc(x) + "</span>").join("")
-      : '<span class="pi-rc-none">无</span>';
+      : '<span class="pi-rc-none">' + esc(t("rc.none")) + "</span>";
     const p = r.prompt || [];
     const sysText = (p.find((m) => m.role === "system") || {}).content || "";
     const userText = (p.find((m) => m.role === "user") || {}).content || "";
@@ -1044,14 +1074,14 @@
       ? '<div class="pi-rc-sublabel">' + esc(label) + '</div><pre class="pi-rc-pre">' + esc(text) + "</pre>"
       : "";
     return '<div class="pi-block pi-recall pi-rc-inspect">' + tag +
-      '<div class="pi-rc-row">从 <b>' + ((r.manifest || []).length) + "</b> 条候选里挑：" +
-      "命中仓库 " + chips(r.hit_repos, "pi-rc-hit") +
-      "　命中记忆 " + chips(r.hit_memories, "pi-rc-hit") +
-      "　分不清·会反问 " + chips(r.ambiguous, "pi-rc-amb") + "</div>" +
-      sub("提示词注入 · system（挑选规则）", sysText) +
-      sub("提示词注入 · user（候选清单 + 最近对话）", userText) +
+      '<div class="pi-rc-row">' + esc(t("rc.pickfrom.a")) + "<b>" + ((r.manifest || []).length) + "</b>" + esc(t("rc.pickfrom.b")) +
+      esc(t("rc.hitrepo")) + chips(r.hit_repos, "pi-rc-hit") +
+      esc(t("rc.hitmem")) + chips(r.hit_memories, "pi-rc-hit") +
+      esc(t("rc.ambiguous")) + chips(r.ambiguous, "pi-rc-amb") + "</div>" +
+      sub(t("rc.sub.sys"), sysText) +
+      sub(t("rc.sub.user"), userText) +
       (r.raw
-        ? '<div class="pi-rc-sublabel pi-rc-anslabel">小模型的回答（它最终挑的结果）</div>' +
+        ? '<div class="pi-rc-sublabel pi-rc-anslabel">' + esc(t("rc.answer")) + "</div>" +
           '<pre class="pi-rc-pre pi-rc-answer">' + esc(r.raw) + "</pre>"
         : "") +
       "</div>";
@@ -1075,7 +1105,7 @@
   function piBlock(cls, labelHtml, bodyHtml) {
     return '<div class="pi-block ' + cls + ' pi-collapsed">' +
       '<div class="pi-label">' + labelHtml +
-      '<button class="pi-fold" type="button" title="展开/收起">▽</button></div>' +
+      '<button class="pi-fold" type="button" title="' + t("pi.fold.tip") + '">▽</button></div>' +
       '<pre>' + bodyHtml + "</pre></div>";
   }
 
@@ -1111,7 +1141,7 @@
       const seg = allSegs.filter((s) => s.kind !== "recall_debug").map((s) => {
         const cls = kindCls[s.kind] || "pi-repo";
         // 召回补进来的仓库段挂个「召回」小标，跟用户手动「+」注入的区分开
-        const tag = s.recalled ? ' <span class="pi-recall-tag">召回</span>' : "";
+        const tag = s.recalled ? ' <span class="pi-recall-tag">' + esc(t("pi.recalled")) + "</span>" : "";
         return piBlock(cls + (s.recalled ? " pi-recalled" : ""), esc(s.label) + tag, esc(s.text));
       }).join("");
       const evMsgs = ev.messages || [];

@@ -156,11 +156,11 @@ async def fetch_tree(client: httpx.AsyncClient, owner: str, name: str) -> str:
         owner:  仓库所有者用户名或 org 名。
         name:   仓库名。
     Returns:
-        带缩进的两层目录树文本，根目录拿不到时返回提示语。
+        带缩进的两层目录树文本，根目录拿不到时返回空串（由 _fill_system 按语言填占位）。
     """
     root = await _list_dir(client, owner, name, "")
     if root is None:
-        return "（拿不到目录结构）"
+        return ""
 
     # 一级子目录并发各列一层，再按 path 对回去
     dirs = [it for it in root if it.get("type") == "dir"]

@@ -152,8 +152,9 @@ async def _run_note(session_id: str, messages: list[dict], model: str,
         })
         return
 
+    none_note = "(no note yet)" if output_language == "English" else "（还没有笔记）"
     skill = (load_skill("session_note")
-             .replace("{old_note}", prev["note"] or "（还没有笔记）")
+             .replace("{old_note}", prev["note"] or none_note)
              .replace("{output_language}", output_language))
     convo = "\n\n".join(f"{m.get('role')}: {m.get('content')}" for m in new_msgs)
 

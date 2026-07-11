@@ -10,6 +10,8 @@ pattern 跨树找文件。`TOOL_SCHEMAS` 是发给模型的工具定义常量，
 import asyncio
 import os
 
+from hunter.repo_detection.prompt_text import texts as _ptexts
+
 
 # 每次最多读多少行，不传 limit 时用这个默认值，超大文件可以分段读
 MAX_LINES = 2000
@@ -56,21 +58,23 @@ def _fmt_line(item: dict, indent: int = 0) -> str:
     return f"{pad}{item['name']:<{width}}[file, {item.get('size', 0)}B]"
 
 
-async def list_tree(root: str, path: str = "") -> str:
+async def list_tree(root: str, path: str = "", output_language: str = "简体中文") -> str:
     """
-    列克隆目录里某一层的条目，带类型和文件大小，跳过 .git。
+    列克隆目录里某一层的条目，带类型和文件大小，跳过 .git。返回文案按 output_language 走。
 
     Args:
         root: 克隆根目录绝对路径。
         path: 目录相对路径，空字符串列根目录。
+        output_language: 提示文案的语言。
     Returns:
         每行一条条目，超 MAX_TREE_ENTRIES 截断附总数；越界或非目录返回提示语。
     """
+    t = _ptexts(output_language)
     full = _safe_join(root, path)
     if full is None:
-        return "路径越界，只能在仓库内查看。"
+        return t["tool_oob_view"]
     if not os.path.isdir(full):
-        return f"{path or '(根目录)'} 不是可列的目录，可能不存在或指向文件，文件请用 read_file 读。"
+        return t["tool_not_dir"].format(path=path or t["tool_root"])
 
     # 收集本层条目，目录排前、同类按名字排，.git 不给模型看
     items = []
@@ -85,19 +89,20 @@ async def list_tree(root: str, path: str = "") -> str:
     lines = [_fmt_line(it) for it in items[:MAX_TREE_ENTRIES]]
     text = "\n".join(lines)
     if len(items) > MAX_TREE_ENTRIES:
-        text += f"\n...（共 {len(items)} 条，只列前 {MAX_TREE_ENTRIES} 条）"
-    return text or "（空目录）"
+        text += t["tool_tree_capped"].format(total=len(items), cap=MAX_TREE_ENTRIES)
+    return text or t["tool_empty_dir"]
 
 
 async def read_file(root: str, read_cache: dict, path: str,
-                    offset: int = 0, limit: int = MAX_LINES) -> str:
+                    offset: int = 0, limit: int = MAX_LINES,
+                    output_language: str = "简体中文") -> str:
     """
     读克隆目录里一个文件，cat -n 风格带行号，支持 offset/limit 分段和带状态的已读去重。
 
     每段在 read_cache 里记一条状态：live（正文还在上下文里）或 archived（被滚动清理归档、
     正文换成占位符了），归档的还记重读了几次。三种情况：没读过正常读、记 live；读过且 live
     再读挡回「已读过」，防空转白烧钱；读过但 archived 放行重读（内容不在上下文里、重读有意义），
-    但到 MAX_REREAD 上限再读也挡，防清理和重读来回拉锯的死循环。
+    但到 MAX_REREAD 上限再读也挡，防清理和重读来回拉锯的死循环。返回文案按 output_language 走。
 
     Args:
         root:       克隆根目录绝对路径。
@@ -105,32 +110,33 @@ async def read_file(root: str, read_cache: dict, path: str,
         path:       文件相对路径。
         offset:     起始行（从 0 起）。
         limit:      读多少行。
+        output_language: 提示文案的语言。
     Returns:
         带行号的内容，行号从 offset+1 起；越界、不存在、读失败、已读过、已达重读上限各返回对应提示。
     """
+    t = _ptexts(output_language)
     # 同一段读过：live 的挡回不再读；archived 的放行重读，但到上限也挡
     key = (path, offset, limit)
     rec = read_cache.get(key)
     if rec is not None:
         if rec["state"] == "live":
-            return f"该文件该段（{path} 行 {offset}-{offset + limit}）已读过，内容未变，略。"
+            return t["tool_already_read"].format(path=path, start=offset, end=offset + limit)
         # archived：内容已被清理出上下文，允许重读回来，但最多 MAX_REREAD 次
         if rec["rereads"] >= MAX_REREAD:
-            return (f"该文件该段（{path} 行 {offset}-{offset + limit}）已归档且重读达上限，"
-                    "不再重复读取，请用现有信息收尾。")
+            return t["tool_reread_max"].format(path=path, start=offset, end=offset + limit)
 
     full = _safe_join(root, path)
     if full is None:
-        return "路径越界，只能在仓库内读取。"
+        return t["tool_oob_read"]
     if not os.path.isfile(full):
-        return f"文件不存在: {path}"
+        return t["tool_not_file"].format(path=path)
 
     # 二进制或非 utf-8 字符用替换符兜底，不让一个文件把工具搞崩
     try:
         with open(full, encoding="utf-8", errors="replace") as f:
             content = f.read()
     except Exception as e:
-        return f"读取失败: {e}"
+        return t["tool_read_fail"].format(err=e)
 
     # 头回读记成 live；重读归档段则回到 live 并把重读计数加一
     if rec is None:
@@ -144,14 +150,15 @@ async def read_file(root: str, read_cache: dict, path: str,
     # 行号从 offset+1 起算，和编辑器一致，方便模型在证据里引用具体行
     numbered = "\n".join(f"{offset + i + 1}\t{line}" for i, line in enumerate(chunk))
     if len(numbered) > MAX_OUTPUT_CHARS:
-        numbered = numbered[:MAX_OUTPUT_CHARS] + "\n...（内容过长已截断，用 offset/limit 读后续）"
+        numbered = numbered[:MAX_OUTPUT_CHARS] + t["tool_read_capped"]
     return numbered
 
 
 async def grep_code(root: str, pattern: str, path: str = "", glob: str = "",
                     output_mode: str = "files_with_matches", ignore_case: bool = False,
-                    context: int = 0, head_limit: int = MAX_GREP_HITS) -> str:
-    """在克隆目录里跑 ripgrep 做正则搜索，把参数拼成 rg 命令行子进程执行。
+                    context: int = 0, head_limit: int = MAX_GREP_HITS,
+                    output_language: str = "简体中文") -> str:
+    """在克隆目录里跑 ripgrep 做正则搜索，把参数拼成 rg 命令行子进程执行。返回文案按 output_language 走。
 
     Args:
         root:        克隆根目录绝对路径。
@@ -162,9 +169,11 @@ async def grep_code(root: str, pattern: str, path: str = "", glob: str = "",
         ignore_case: 大小写不敏感。
         context:     content 模式下匹配行前后各显示几行。
         head_limit:  最多返回多少行。
+        output_language: 提示文案的语言。
     Returns:
         rg 的命中结果，超 head_limit 截断附总数；无命中、越界、出错各返回对应提示。
     """
+    t = _ptexts(output_language)
     cmd = ["rg", "--color=never"]
 
     # 三种输出模式分别对应 rg 的 -c / -n / -l，content 模式才拼上下文
@@ -190,7 +199,7 @@ async def grep_code(root: str, pattern: str, path: str = "", glob: str = "",
     cmd.append(pattern)
     if path:
         if _safe_join(root, path) is None:
-            return "路径越界，只能在仓库内搜索。"
+            return t["tool_oob_search"]
         cmd.append(path)
 
     # stdin 必须显式断开：rg 没给搜索路径时，见 stdin 是可读管道就改读 stdin 而不搜目录，
@@ -202,36 +211,39 @@ async def grep_code(root: str, pattern: str, path: str = "", glob: str = "",
 
     # rg 退出码 1 表示没匹配，属正常不是报错；2 以上才是真出错
     if proc.returncode == 1:
-        return "无命中。"
+        return t["tool_no_hit"]
     if proc.returncode not in (0, 1):
-        return f"搜索出错：{err.decode('utf-8', 'replace').strip()}"
+        return t["tool_search_err"].format(err=err.decode("utf-8", "replace").strip())
 
     lines = out.decode("utf-8", "replace").splitlines()
     capped = lines[:head_limit]
     text = "\n".join(capped)
     if len(lines) > head_limit:
-        text += f"\n...（共 {len(lines)} 行命中，只显示前 {head_limit} 行）"
+        text += t["tool_grep_capped"].format(total=len(lines), cap=head_limit)
     if len(text) > MAX_OUTPUT_CHARS:
-        text = text[:MAX_OUTPUT_CHARS] + "\n...（输出过长已截断）"
-    return text or "无命中。"
+        text = text[:MAX_OUTPUT_CHARS] + t["tool_out_capped"]
+    return text or t["tool_no_hit"]
 
 
-async def glob_files(root: str, pattern: str, path: str = "") -> str:
+async def glob_files(root: str, pattern: str, path: str = "",
+                     output_language: str = "简体中文") -> str:
     """
-    在克隆目录里按文件名 pattern 找文件，用 rg --files 配 --glob 列出匹配路径。
+    在克隆目录里按文件名 pattern 找文件，用 rg --files 配 --glob 列出匹配路径。返回文案按 output_language 走。
 
     Args:
         root:    克隆根目录绝对路径。
         pattern: 文件名匹配的 glob，如 **/*.py。
         path:    限定搜索的子目录，空则搜整个仓库。
+        output_language: 提示文案的语言。
     Returns:
         每行一个匹配文件路径，超 MAX_GLOB_HITS 截断附总数；无匹配、越界、出错各返回提示。
     """
+    t = _ptexts(output_language)
     # 用户 glob 在前、排除 .git 在后，rg 后匹配优先，保证 .git 内部不被显式 glob 重新带进来
     cmd = ["rg", "--files", "--color=never", "-g", pattern, "-g", "!.git"]
     if path:
         if _safe_join(root, path) is None:
-            return "路径越界，只能在仓库内查找。"
+            return t["tool_oob_glob"]
         cmd.append(path)
 
     # stdin 显式断开，防 rg 在管道 stdin 下改读 stdin，同 grep_code
@@ -242,15 +254,15 @@ async def glob_files(root: str, pattern: str, path: str = "") -> str:
 
     # rg --files 没匹配时退出码可能是 1，按无结果处理，2 以上才是出错
     if proc.returncode not in (0, 1):
-        return f"查找出错：{err.decode('utf-8', 'replace').strip()}"
+        return t["tool_glob_err"].format(err=err.decode("utf-8", "replace").strip())
 
     files = out.decode("utf-8", "replace").splitlines()
     if not files:
-        return "没有匹配的文件。"
+        return t["tool_no_file"]
     capped = files[:MAX_GLOB_HITS]
     text = "\n".join(capped)
     if len(files) > MAX_GLOB_HITS:
-        text += f"\n...（共 {len(files)} 个，只显示前 {MAX_GLOB_HITS} 个）"
+        text += t["tool_glob_capped"].format(total=len(files), cap=MAX_GLOB_HITS)
     return text
 
 
@@ -324,6 +336,81 @@ TOOL_SCHEMAS = [
 ]
 
 
+# 英文界面搜索时用这套英文工具定义，跟中文那套结构一样、只换 description 语言
+TOOL_SCHEMAS_EN = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tree",
+            "description": "List the direct children of a directory in the repo, giving each item's name, whether it's a file or directory, and file size in bytes. Leave path empty to list the root. It only lists one level; call it again on a subdirectory path to go deeper. File sizes are for reference; weigh whether a large file is worth a read call.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory relative path; empty lists the root"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "description": "Read a file's content, returned with line numbers so you can cite specific lines in evidence. Large files auto-truncate; use offset and limit to read a specific line range. For a large file, read the head with a small limit first to see the structure, then read specific ranges as needed rather than swallowing it whole. Once you've read a file segment you don't need to read it again.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File relative path"},
+                    "offset": {"type": "integer", "description": "Start line, 0-based, default 0"},
+                    "limit": {"type": "integer", "description": "How many lines to read, default 2000"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "grep_code",
+            "description": "Run a ripgrep regex search inside the current repo to locate which files a feature, class or function appears in, without reading everything. By default it returns only file names, the most token-frugal.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regex to search, ripgrep syntax; escape literal braces and other metacharacters"},
+                    "path": {"type": "string", "description": "Subdirectory relative path to limit the search; empty searches the whole repo"},
+                    "glob": {"type": "string", "description": "Filter by file name, e.g. *.py, **/*.ts; only search matching files"},
+                    "output_mode": {"type": "string", "description": "files_with_matches returns file names only (default, most token-frugal), content returns matching lines with line numbers, count returns per-file match counts"},
+                    "ignore_case": {"type": "boolean", "description": "Case-insensitive, default false"},
+                    "context": {"type": "integer", "description": "Lines of context before and after each match, only when output_mode is content"},
+                    "head_limit": {"type": "integer", "description": "Max matching lines to return, default 20"},
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "glob_files",
+            "description": "Find files across the whole repo by a file-name pattern, returning matching file paths. Use it to quickly locate manifests, entry points, config files and the like, faster than paging through list_tree level by level.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "File-name glob to match, e.g. **/*.py, src/**/*.ts"},
+                    "path": {"type": "string", "description": "Subdirectory to limit the search; empty searches the whole repo"},
+                },
+                "required": ["pattern"],
+            },
+        },
+    },
+]
+
+
+def tool_schemas(output_language: str = "简体中文") -> list:
+    """按 output_language 取工具定义清单，English 用英文那套，其余中文。"""
+    return TOOL_SCHEMAS_EN if output_language == "English" else TOOL_SCHEMAS
+
+
 def archive_segment(read_cache: dict, key: tuple) -> None:
     """把一段读文件记录标成归档：正文已被滚动清理出上下文，之后允许模型重读回来（限次）。
 
@@ -356,25 +443,26 @@ def is_archived_read(read_cache: dict, args: dict) -> bool:
     return rec is not None and rec["state"] == "archived" and rec["rereads"] < MAX_REREAD
 
 
-def make_dispatch(local_root: str, read_cache: dict) -> dict:
+def make_dispatch(local_root: str, read_cache: dict, output_language: str = "简体中文") -> dict:
     """把四个工具绑定到克隆目录，返回「工具名 → async 闭包」的调度表。
 
-    四个闭包把 local_root 和 read_cache 固定进去，对外只收一个 args dict（LLM 填的
-    参数），引擎按工具名查表调用时不需要知道当前是哪个仓库、哪个目录。
+    四个闭包把 local_root、read_cache 和 output_language 固定进去，对外只收一个 args dict
+    （LLM 填的参数），引擎按工具名查表调用时不需要知道当前是哪个仓库、哪个目录、什么语言。
 
     Args:
         local_root: 克隆根目录绝对路径。
         read_cache: 这个仓库私有的已读缓存 dict，传给 read_file 去重和记状态用。
+        output_language: 工具返回文案的语言。
     Returns:
         dict，键是工具名（list_tree / read_file / grep_code / glob_files），值是 async 闭包。
     """
     async def _list_tree(args: dict) -> str:
-        return await list_tree(local_root, args.get("path", "") or "")
+        return await list_tree(local_root, args.get("path", "") or "", output_language)
 
     async def _read_file(args: dict) -> str:
         offset = args.get("offset") or 0
         limit = args.get("limit") or MAX_LINES
-        return await read_file(local_root, read_cache, args["path"], offset, limit)
+        return await read_file(local_root, read_cache, args["path"], offset, limit, output_language)
 
     async def _grep_code(args: dict) -> str:
         return await grep_code(
@@ -382,10 +470,10 @@ def make_dispatch(local_root: str, read_cache: dict) -> dict:
             args.get("path", "") or "", args.get("glob", "") or "",
             args.get("output_mode", "files_with_matches") or "files_with_matches",
             bool(args.get("ignore_case")), args.get("context") or 0,
-            args.get("head_limit") or MAX_GREP_HITS)
+            args.get("head_limit") or MAX_GREP_HITS, output_language)
 
     async def _glob_files(args: dict) -> str:
-        return await glob_files(local_root, args["pattern"], args.get("path", "") or "")
+        return await glob_files(local_root, args["pattern"], args.get("path", "") or "", output_language)
 
     return {"list_tree": _list_tree, "read_file": _read_file,
             "grep_code": _grep_code, "glob_files": _glob_files}

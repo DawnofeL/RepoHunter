@@ -91,7 +91,7 @@ async def run_pipeline(params: dict):
 
         # 1. 从需求清单抽出搜索查询，keypoints 原样带回
         qu_skill = load_skill("query_understanding")
-        queries = await Query_Understanding(qu_skill, keypoints)
+        queries = await Query_Understanding(qu_skill, keypoints, output_language)
         yield _ev("qu_done", queries=queries.get("queries", []), keypoints=queries.get("keypoints", []))
 
         # 1.5 把每条 keypoint 编译成一句判定标准，回显给用户看系统怎么理解需求，也传给下游避免重复编译
@@ -138,7 +138,7 @@ async def run_pipeline(params: dict):
         with contextlib.redirect_stdout(tee):
             det_task = asyncio.ensure_future(Repo_Detection(
                 header_md, gate_md, explore_md, advocate_md, skeptic_md, adjudicate_md,
-                repos, queries, output_language, on_event=emit, emit_log=emit_log,
+                repos, queries, output_language=output_language, on_event=emit, emit_log=emit_log,
                 standards=standards, use_memory=use_memory, triage_md=triage_md))
             async for ev in _drain(det_task, q):
                 yield ev

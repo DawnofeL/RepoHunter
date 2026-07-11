@@ -44,10 +44,10 @@ def _wants_remember(new_msgs: list[dict]) -> bool:
     return False
 
 
-def _fmt_manifest(manifest: list[dict]) -> str:
-    """把已有记忆清单拼成文本填进提取提示词，让模型对照去重。空就给一句占位。"""
+def _fmt_manifest(manifest: list[dict], output_language: str = "简体中文") -> str:
+    """把已有记忆清单拼成文本填进提取提示词，让模型对照去重。空就给一句占位（按语言）。"""
     if not manifest:
-        return "（暂无已有记忆）"
+        return "(no existing memories)" if output_language == "English" else "（暂无已有记忆）"
     return "\n".join(f"- {r['name']}（{r['type']}）：{r.get('description', '')}" for r in manifest)
 
 
@@ -92,7 +92,7 @@ async def _run_extraction(session_id: str, messages: list[dict], model: str,
 
     manifest = await asyncio.to_thread(list_manifest)
     skill = (load_skill("extract_memories")
-             .replace("{memories}", _fmt_manifest(manifest))
+             .replace("{memories}", _fmt_manifest(manifest, output_language))
              .replace("{output_language}", output_language))
     convo = "\n\n".join(f"{msg.get('role')}: {msg.get('content')}" for msg in new_msgs)
 

@@ -1,0 +1,11 @@
+# 一行 `docker compose up` 起服务。把容器的 8755 映射到本机，data 挂成卷，
+# 搜索记录、对话记忆、凭证、克隆的仓库都落在本机 ./data 里，容器删了也不丢、也不进 git。
+
+services:
+  repohunter:
+    build: .
+    ports:
+      - "8755:8755"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

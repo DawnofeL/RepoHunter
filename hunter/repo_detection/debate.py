@@ -12,6 +12,7 @@ from hunter.config import call_deepseek, MODELS
 from hunter.cost import track, TokenMeter
 from hunter.repo_detection.tool_loop import _try_json
 from hunter.repo_detection.log_visual import _fmt_react, _fmt_visual
+from hunter.repo_detection.prompt_text import texts as _ptexts
 
 
 def _kp_with_standard(keypoint: str, standards: dict[str, str] | None,
@@ -106,7 +107,7 @@ def _fill_adjudicate(template: str, keypoint: str, stars: int, size: int,
 
 async def _debate_json(messages: list, meter: TokenMeter, model: str | None = None,
                        full_name: str = "", label: str = "", log: str = "Visual",
-                       sink: list | None = None) -> dict | None:
+                       sink: list | None = None, output_language: str = "简体中文") -> dict | None:
     """
     辩论阶段的不带工具 JSON 请求：发一次强制 JSON，坏了修格式重试一次，仍坏返回 None。
 
@@ -150,7 +151,7 @@ async def _debate_json(messages: list, meter: TokenMeter, model: str | None = No
     # 坏了让它只改格式重试一次，前缀没变能命中缓存
     retry = messages + [
         {"role": "assistant", "content": raw},
-        {"role": "user", "content": "输出的 JSON 格式不合法。内容不变，只修复格式，重新输出合法 JSON。"},
+        {"role": "user", "content": _ptexts(output_language)["json_fix"]},
     ]
     return _try_json(await _ask(retry))
 

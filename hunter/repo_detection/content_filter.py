@@ -14,6 +14,7 @@ import httpx
 
 from hunter import config
 from hunter.repo_detection.prefetch import fetch_readme, clean_readme, fetch_tree, fetch_meta
+from hunter.repo_detection.prompt_text import texts as _ptexts
 from hunter.repo_detection.explorer import explore_one
 from hunter.repo_detection.debate import _kp_with_standard
 from hunter.repo_detection.scoring import rank
@@ -21,11 +22,13 @@ from hunter.pre_filter.keypoint_understanding import Keypoint_Understanding
 from hunter.history import load_memories
 
 
-def _fill_system(template: str, repo: dict, readme: str, tree: str, size: int) -> str:
+def _fill_system(template: str, repo: dict, readme: str, tree: str, size: int,
+                 output_language: str = "简体中文") -> str:
     """把 system 模板的六个占位填成真值，返回给 Content Filter 用的那份 system。
 
     六个占位对应项目的六样资料：{full_name} 仓库全名、{description} 仓库简介、
     {topics} 标签、{readme} 清洗后的 README、{tree} 两层目录结构树、{size} 仓库体积（MB）。
+    空值占位（无内容时的「（无）」）按 output_language 走，英文搜索时用 "(none)"。
 
     用字符串替换而不用 str.format，因为 readme 和 tree 正文里有花括号会被 format 当占位符。
 
@@ -40,16 +43,17 @@ def _fill_system(template: str, repo: dict, readme: str, tree: str, size: int) -
     """
 
     # topics 是字符串列表，拼成逗号分隔的一行，空的话填占位免得出现空白行
-    topics = ", ".join(repo.get("topics") or []) or "（无）"
+    none = _ptexts(output_language)["none"]
+    topics = ", ".join(repo.get("topics") or []) or none
 
     # size 是 KB，换算成 MB 给模型看，保留一位小数
     size_mb = round(size / 1024, 1)
     return (template
             .replace("{full_name}", repo["full_name"])
-            .replace("{description}", repo.get("description") or "（无）")
+            .replace("{description}", repo.get("description") or none)
             .replace("{topics}", topics)
-            .replace("{readme}", readme or "（无）")
-            .replace("{tree}", tree or "（无）")
+            .replace("{readme}", readme or none)
+            .replace("{tree}", tree or none)
             .replace("{size}", str(size_mb)))
 
 
@@ -137,7 +141,8 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
     # 关着 memo 就是空的，所有仓库照常拆。查记忆是纯读，写回在 webapp 层，不受这个开关影响
     memo: dict = {}
     if use_memory:
-        hit = load_memories([r["full_name"] for r in repos])
+        # 按当前搜索语言查复用：只命中有这门语言那格拆解的，别的语言那格不算、会照常重新深挖
+        hit = load_memories([r["full_name"] for r in repos], output_language)
         memo = {fn: m["dissection"] for fn, m in hit.items() if m.get("dissection")}
         if memo:
             print(f"[repo_memory] 命中 {len(memo)}/{n} 个仓库的记忆，这些跳过 explorer 复用拆解")
@@ -168,7 +173,7 @@ async def Repo_Detection(header_md: str, gate_md: str, explore_md: str,
                 fetch_meta(client, owner, name),
             )
             readme = clean_readme(raw) if raw else ""
-            system = _fill_system(header_md, repo, readme, tree, size)
+            system = _fill_system(header_md, repo, readme, tree, size, output_language)
             gate_user = _fill_gate(gate_md, keypoints, standards, output_language)
             explore_user = _fill_explore(explore_md, output_language)
             # emit_log 为 None 就不传，让 explore_one 用它自己的默认（直接 print）

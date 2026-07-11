@@ -11,17 +11,21 @@ import warnings
 
 from hunter.config import call_deepseek, MODELS
 from hunter.cost import track, TokenMeter
+from hunter.repo_detection.prompt_text import texts as _ptexts
 
 
-async def Query_Understanding(skill_md: str, keypoints: list[str]) -> dict:
+async def Query_Understanding(skill_md: str, keypoints: list[str],
+                              output_language: str = "简体中文") -> dict:
     """用 DeepSeek 从用户的需求清单抽出搜索查询，keypoints 原样带回。
 
     keypoints 是用户在前端一条条写的需求，本身就是后面逐条核对的清单，这里不改它、
-    只读它来抽 queries。输出 JSON 坏掉时走三级兜底，尽量不让整条流水线崩。
+    只读它来抽 queries。输出 JSON 坏掉时走三级兜底，尽量不让整条流水线崩。需求清单包装词和
+    JSON 修复消息按 output_language 走，英文搜索时不插中文（queries 本身由 skill 强制英文）。
 
     Args:
         skill_md:  query_understanding.md 的文件内容，作为 system prompt。
         keypoints: 用户写的需求清单，每条一句。
+        output_language: 包装词和修复消息的语言。
     Returns:
         含 queries、keypoints 两个键的 dict。queries 是抽出的搜索查询，keypoints 是
         原样带回的用户清单；queries 彻底解析不出时给空列表。
@@ -56,8 +60,9 @@ async def Query_Understanding(skill_md: str, keypoints: list[str]) -> dict:
             return None
 
     # 用户的需求清单拼成 user，每条一行，skill md 进 system 保缓存命中
+    pt = _ptexts(output_language)
     bullets = "\n".join(f"- {k}" for k in keypoints)
-    user_content = f"用户的需求清单：\n{bullets}"
+    user_content = pt["qu_bullets"].format(bullets=bullets)
     messages = [
         {"role": "system", "content": skill_md},
         {"role": "user", "content": user_content},
@@ -73,7 +78,7 @@ async def Query_Understanding(skill_md: str, keypoints: list[str]) -> dict:
         # 把破损输出塞回 assistant，再追一条修格式指令，前缀不变所以能命中缓存
         retry_messages = messages + [
             {"role": "assistant", "content": raw},
-            {"role": "user", "content": f"输出的 JSON 格式不合法，错误：{e}。内容不变，只修复格式，重新输出合法 JSON。"},
+            {"role": "user", "content": pt["qu_json_fix"].format(err=e)},
         ]
         raw = await call(retry_messages)
 

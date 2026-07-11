@@ -7,22 +7,26 @@ _drop_bad_designs 兜底删掉仍对不上的设计点，_audit_cases 对辩论�
 import os
 
 from hunter.repo_detection.agent_tools import _safe_join
+from hunter.repo_detection.prompt_text import texts as _ptexts
 
 
-def _audit_anchors(local_root: str, llm_out: dict | None) -> list[dict]:
+def _audit_anchors(local_root: str, llm_out: dict | None,
+                   output_language: str = "简体中文") -> list[dict]:
     """
     核对 key_designs 里每个 where 锚点在克隆目录里是否真实存在，返回对不上的清单。
 
     where 是「路径:符号」格式、多个逗号隔开。路径用 os.path.exists 查，带符号且路径是
     文件的再读该文件确认符号确实出现在里面。llm_out 解析失败（None）或没有 key_designs
-    时返回空清单。
+    时返回空清单。reason 会随重修指令发给模型，按 output_language 走。
 
     Args:
         local_root: 克隆根目录绝对路径。
         llm_out:    模型最终输出的 dict，可能为 None。
+        output_language: reason 文案的语言。
     Returns:
         坏锚点清单，每项含 name（设计点名）、anchor（出问题的那段 where）、reason。
     """
+    t = _ptexts(output_language)
     bad = []
     designs = (llm_out or {}).get("dissection", {}).get("key_designs", []) or []
     for d in designs:
@@ -40,7 +44,7 @@ def _audit_anchors(local_root: str, llm_out: dict | None) -> list[dict]:
             symbol = symbol.strip()
             full = _safe_join(local_root, path)
             if full is None or not os.path.exists(full):
-                bad.append({"name": name, "anchor": seg, "reason": "路径不存在"})
+                bad.append({"name": name, "anchor": seg, "reason": t["anchor_path_missing"]})
                 continue
 
             # 路径在、又带了符号且指向文件，就读文件确认符号确实在里面
@@ -49,30 +53,25 @@ def _audit_anchors(local_root: str, llm_out: dict | None) -> list[dict]:
                     with open(full, encoding="utf-8", errors="replace") as f:
                         if symbol not in f.read():
                             bad.append({"name": name, "anchor": seg,
-                                        "reason": f"文件在，但没搜到符号 {symbol}"})
+                                        "reason": t["anchor_symbol_missing"].format(symbol=symbol)})
                 except Exception:
                     pass
     return bad
 
 
-def _repair_msg(bad: list[dict]) -> str:
+def _repair_msg(bad: list[dict], output_language: str = "简体中文") -> str:
     """
-    把坏锚点清单拼成一条重修指令，追加进对话让模型只改这几条、重出完整 JSON。
+    把坏锚点清单拼成一条重修指令，追加进对话让模型只改这几条、重出完整 JSON。按 output_language 走。
 
     Args:
         bad: _audit_anchors 返回的坏锚点清单。
+        output_language: 重修指令的语言。
     Returns:
         给模型的重修提示文本。
     """
-    lines = "\n".join(f'- "{b["name"]}" 的 where "{b["anchor"]}"：{b["reason"]}' for b in bad)
-    return (
-        "系统提示:你刚才输出的 key_designs 里，下面这些 where 引用在仓库里核对不上：\n"
-        f"{lines}\n"
-        "请只针对这几条重新用工具核对源码：用 glob_files / grep_code / read_file 找到这个"
-        "设计点真正对应的文件和符号，把 where 改成查得到的正确锚点。如果某条设计点本身在"
-        "源码里找不到依据、站不住，就把它从 key_designs 里删掉，不要硬留。其余 key_designs "
-        "和别的字段保持原样。改完重新输出完整 JSON。"
-    )
+    t = _ptexts(output_language)
+    lines = "\n".join(t["repair_line"].format(name=b["name"], anchor=b["anchor"], reason=b["reason"]) for b in bad)
+    return t["repair_head"] + f"{lines}\n" + t["repair_tail"]
 
 
 def _drop_bad_designs(llm_out: dict, bad: list[dict]) -> dict:

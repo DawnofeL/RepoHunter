@@ -1,0 +1,13 @@
+# 构建镜像时不拷进去的东西：版本历史、本地数据、缓存、notebook
+.git
+.gitignore
+data
+__pycache__
+**/__pycache__
+*.pyc
+.ipynb_checkpoints
+*.ipynb
+.env
+Dockerfile
+.dockerignore
+docker-compose.yml
