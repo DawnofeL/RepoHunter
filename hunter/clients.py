@@ -1,6 +1,6 @@
 """GitHub MCP 连接与工具调用封装。
 
-本模块管和 GitHub MCP server 打交道的三件事。`mcp_session` 是异步上下文管理器，
+本模块管 GitHub MCP server。`mcp_session` 是异步上下文管理器，
 连上 server、握手，把可直接调工具的 session 交出去。`call_tool` 在 session 上调
 某个 MCP 工具，带失败重试。`parse_tool_result` 把工具返回统一成 dict 或 list，
 方便后面取值。检索阶段就是先用 mcp_session 拿连接，再用 call_tool 搜仓库。

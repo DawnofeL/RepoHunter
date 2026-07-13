@@ -730,8 +730,7 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
             llm_out = await _parse_final(messages, msg.content or "", meter, model, output_language)
 
         # 审计闸：拿到最终 JSON，核对 key_designs 的 where 锚点。坏了进修复轮重查、再审计，
-        # 修复过仍坏就删点兜底。整个审计+修复收在这个内层循环里，不回主循环顶（回顶会撞上预算
-        # 耗尽的逼停，把修复轮辛苦重查的结果覆盖掉）
+        # 修复过仍坏就删点兜底。整个审计+修复收在这个内层循环里，不回主循环顶（回顶会撞上预算耗尽的逼停，把修复轮辛苦重查的结果覆盖掉）
         done_explorer = False
         while True:
             bad = _audit_anchors(local_root, llm_out, output_language)

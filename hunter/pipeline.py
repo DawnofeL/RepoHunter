@@ -86,7 +86,7 @@ async def run_pipeline(params: dict):
         keypoints     = params.get("keypoints", [])
         languages     = params.get("languages", [])
         output_language = params.get("output_language", "简体中文")
-        top_k         = params.get("top_k", 30)
+        top_k         = params.get("top_k", 20)
         use_memory    = params.get("use_memory", True)
 
         # 1. 从需求清单抽出搜索查询，keypoints 原样带回

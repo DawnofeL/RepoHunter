@@ -1,6 +1,6 @@
 """意图理解阶段：从用户写的需求清单里抽出 GitHub 搜索查询。
 
-本模块只有一个入口 `Query_Understanding`，它调 DeepSeek 从用户一条条写的需求里抽出
+本模块只有一个入口 `Query_Understanding`，它调用 llm 从用户一条条写的需求里抽出
 项目身份概念、翻成 GitHub 能搜的 queries。keypoints 由用户直接写、不经 QU，这里原样
 带回。内部用闭包 `call` 统一发请求并计量，`try_repair` 在 JSON 坏掉时正则兜底。
 """
@@ -35,7 +35,7 @@ async def Query_Understanding(skill_md: str, keypoints: list[str],
     meter = TokenMeter()
 
     async def call(msgs: list[dict]) -> str:
-        """发一次 DeepSeek 请求并返回回复文本，顺便把用量记进全局和本累计器。"""
+        """发一次 llm 请求并返回回复文本，顺便把用量记进全局和本累计器。"""
 
         # response_format 强制 DeepSeek 输出合法 JSON，减少格式出错概率，模型从 MODELS 配置取
         resp = await call_deepseek(

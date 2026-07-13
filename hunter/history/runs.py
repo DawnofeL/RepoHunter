@@ -1,10 +1,13 @@
-"""runs 表：每次搜索的流水账，一次搜索一行（搜索账本）。
+"""这个文件管搜索流水账：用户每发起一次搜索，就在这儿记一行（对应数据库里的 `runs` 表）。
 
-results 存这次每个仓库的轻量记录（判定、轨迹、token、命中数），但不抄 dissection，只留
-full_name 指向 repo_memory；点开一次搜索回放时用 get_run 按名字把拆解 JOIN 回来拼成完整 ranked。
-save_run 是唯一写入口，一次搞定两张表：先插 run 行拿 run_id，再把这批仓库 upsert 进 repo_memory
-（拆解全库只存一份，并把这次搜索追进各仓库的 seen_runs 时间线）。摘要列（query/keypoints/total/
-top_name）单独存，列表页只查它们不碰大块的 results。连库走 hunter.history.history_db 的共享 _connect。
+一行里只放这次搜索的轻巧信息，像搜的关键词、结果怎么排、每个仓库对上了几条需求、花了多少钱。
+至于每个仓库那份又大又重的分析（代码里叫 `dissection`），不在这儿存，另有一张仓库账本（`repo_memory` 表）专门存它、全库只存一份；这行只写个仓库名（`full_name`）指过去，免得每搜一次就把同一份大东西重抄一遍。
+
+真正干活的是两个函数。
+`save_run` 存一次搜索：先写下这一行、拿到这次搜索的编号，再把这批仓库交给仓库账本更新，并在每个仓库名下记一笔「这次搜过它」。
+`get_run` 翻看一次旧搜索：把那一行读出来，再拿每个仓库名去仓库账本取回它的分析，拼成完整结果给页面显示。
+
+另外几个是常规操作：`list_runs` 给列表页列出所有搜索的简表，`delete_run`、`delete_repo_from_run`、`delete_process`、`clear_runs` 分别删掉一整次搜索、从某次搜索里去掉一个仓库、只清掉某次搜索的过程记录、清空所有搜索。
 """
 
 import json
@@ -47,7 +50,11 @@ def init_runs() -> None:
 
 
 def _strip_dissection(ranked: list[dict]) -> list[dict]:
-    # 把每个仓库结果里的 dissection 摘掉再落库，拆解只归 repo_memory 存一份；读时按名字 JOIN 回来
+    """把每个仓库那份又大又重的分析（`dissection`）先摘掉，再返回这批精简后的结果。
+
+    每次搜索的流水账里不重复抄这份分析，它只在仓库账本里存一份，省地方。
+    摘掉的只是分析这一块，仓库名和其它信息都照留；将来翻看这次搜索时（`get_run`），再按仓库名到仓库账本把分析取回来配上。
+    """
     return [{k: v for k, v in r.items() if k != "dissection"} for r in ranked]
 
 

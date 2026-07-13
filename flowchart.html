@@ -1,0 +1,1260 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RepoHunter · 全景架构流程图</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+:root {
+  --bg:      #ECE8DF;
+  --dark:    #1C1A12;
+  --dark2:   #262318;
+
+  --t1: #1C1A12;
+  --t2: rgba(28,26,18,0.60);
+  --t3: rgba(28,26,18,0.38);
+  --tw:  #F4F1E8;
+  --tw2: rgba(244,241,232,0.72);
+  --tw3: rgba(244,241,232,0.42);
+
+  /* 森林色板 · 自然科学与生命 */
+  --moss:   #4A6741;
+  --kombu:  #2D4E30;
+  --lime:   #B6C849;
+  --cedar:  #8A5030;
+  --amber:  #B8820A;
+  --teal:   #3A6A66;
+  --rust:   #B06A4A;
+
+  --expo:   cubic-bezier(0.16,1,0.3,1);
+  --spring: cubic-bezier(0.34,1.4,0.5,1);
+  --smooth: cubic-bezier(0.25,0.46,0.45,0.94);
+}
+
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { width:100%; height:100%; background:var(--bg); overflow:hidden; }
+body {
+  font-family:'Be Vietnam Pro','Microsoft YaHei',sans-serif;
+  color:var(--t1);
+  -webkit-font-smoothing:antialiased;
+  user-select:none; -webkit-user-select:none;
+}
+
+/* 背景三层 */
+.bg-grid {
+  position:fixed; inset:0; pointer-events:none; z-index:0;
+  background-image:radial-gradient(circle, rgba(28,26,18,0.05) 1px, transparent 1px);
+  background-size:30px 30px;
+}
+.bg-glow {
+  position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:
+    radial-gradient(ellipse 60% 50% at 18% 22%, rgba(74,103,65,0.07), transparent 70%),
+    radial-gradient(ellipse 55% 45% at 82% 80%, rgba(138,80,48,0.06), transparent 70%);
+}
+.grain {
+  position:fixed; inset:0; pointer-events:none; z-index:1; opacity:0.03;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size:160px 160px;
+}
+
+/* HUD */
+.hud-divider {
+  position:fixed; top:64px; left:30px; width:196px; height:1px; z-index:40; pointer-events:none;
+  background:linear-gradient(90deg, rgba(138,80,48,0.40) 0, rgba(138,80,48,0.12) 60%, transparent 100%);
+}
+.hud-left  { position:fixed; top:22px; left:30px; z-index:50; pointer-events:none; }
+.hud-acc   { width:18px; height:2px; background:var(--lime); margin-bottom:8px; }
+.hud-title { font-size:14px; font-weight:800; letter-spacing:0.04em; color:var(--t1); }
+.hud-sub   { font-family:'JetBrains Mono',monospace; font-size:7.5px; color:var(--t3);
+             letter-spacing:0.22em; margin-top:5px; text-transform:uppercase; }
+.hud-right { position:fixed; top:22px; right:30px; z-index:50; pointer-events:none; text-align:right; }
+.hud-badge { font-family:'JetBrains Mono',monospace; font-size:7px; letter-spacing:0.2em;
+             color:var(--t3); text-transform:uppercase; }
+.hud-name  { font-size:12px; font-weight:700; letter-spacing:0.06em; color:var(--t1); margin-top:5px; }
+
+/* 画布视口 */
+#viewport {
+  position:fixed; inset:0; z-index:10; overflow:hidden;
+  cursor:grab; touch-action:none;
+  user-select:none; -webkit-user-select:none;
+}
+#viewport.grabbing { cursor:grabbing; }
+#canvas {
+  position:absolute; top:0; left:0;
+  width:2950px; height:2600px;
+  transform-origin:0 0;
+  will-change:transform;
+}
+
+/* 区域水印标签 */
+.region {
+  position:absolute; transform:translate(-50%,-50%);
+  font-family:'JetBrains Mono',monospace; letter-spacing:0.34em;
+  text-transform:uppercase; color:rgba(28,26,18,0.11);
+  font-size:13px; font-weight:500; pointer-events:none; white-space:nowrap; z-index:1;
+}
+.region .r-tick { display:inline-block; width:22px; height:1px; background:rgba(28,26,18,0.15);
+  vertical-align:middle; margin-right:10px; }
+
+/* 连线层 */
+#edges { position:absolute; top:0; left:0; width:100%; height:100%; z-index:2; pointer-events:none; overflow:visible; }
+.edge-base { fill:none; stroke:rgba(28,26,18,0.24); stroke-width:1.5; transition:opacity 0.4s ease; }
+.edge-base.e-dash     { stroke:rgba(184,130,10,0.48); stroke-dasharray:6 5; }
+.edge-base.e-feedback { stroke:rgba(58,106,102,0.45); stroke-dasharray:5 6; }
+.edge-base.ehidden, .edge-flow.ehidden { opacity:0 !important; }
+.edge-flow { fill:none; stroke:rgba(28,26,18,0.15); stroke-width:1.5;
+  stroke-dasharray:1.5 13; stroke-linecap:round; animation:dashflow 1.7s linear infinite;
+  opacity:0; transition:opacity 0.9s ease; }
+.edge-flow.live { opacity:1; }
+@keyframes dashflow { to { stroke-dashoffset:-29; } }
+
+/* 边标签 */
+#labelLayer { position:absolute; top:0; left:0; width:100%; height:100%; z-index:3; pointer-events:none; }
+.elabel {
+  position:absolute; transform:translate(-50%,-50%);
+  font-family:'JetBrains Mono',monospace; font-size:9px; letter-spacing:0.03em;
+  color:var(--t2); background:var(--bg); padding:2px 8px; border-radius:5px;
+  border:1px solid rgba(28,26,18,0.08); white-space:nowrap;
+  opacity:0; transition:opacity 0.5s ease;
+}
+.elabel.show { opacity:1; }
+.elabel.ehidden { opacity:0 !important; }
+
+/* 节点 */
+.node { position:absolute; transform:translate(-50%,-50%); z-index:5; transition:opacity 0.42s var(--smooth); }
+.node.collapsed-hidden { opacity:0; pointer-events:none; }
+
+/* 折叠角标 +N */
+.node-badge {
+  position:absolute; right:-9px; bottom:-9px; z-index:8;
+  min-width:23px; height:23px; padding:0 7px; border-radius:12px;
+  color:#EDE7D7;
+  font-family:'JetBrains Mono',monospace; font-size:10px; font-weight:500;
+  display:flex; align-items:center; justify-content:center;
+  border:1px solid transparent;
+  opacity:0; transform:scale(0.5); pointer-events:none;
+  transition:opacity 0.32s ease, transform 0.32s var(--spring), background 0.32s ease, box-shadow 0.32s ease;
+}
+.node-badge.on {
+  opacity:1; transform:scale(1); pointer-events:auto; cursor:pointer;
+  background:#3A3528; box-shadow:0 4px 12px rgba(28,26,18,0.25);
+  border-color:rgba(182,200,73,0.35);
+}
+
+.card {
+  position:relative; border-radius:13px; padding:13px 17px 14px; cursor:pointer;
+  opacity:0; transform:translateY(10px) scale(0.965);
+  transition: opacity 0.6s var(--smooth),
+              transform 0.72s cubic-bezier(0.22,1,0.36,1),
+              box-shadow 0.35s var(--smooth), background 0.3s ease;
+  overflow:hidden;
+}
+.card.shown { opacity:1; transform:translateY(0) scale(1); }
+.card.shown:hover { transform:translateY(-2px) scale(1.035); z-index:9; }
+.card.selected {
+  animation:none !important;
+  transform:translateY(-3px) scale(1.045) !important;
+  outline:2px solid rgba(182,200,73,0.9); outline-offset:3px;
+  box-shadow:0 18px 46px rgba(28,26,18,0.26), 0 0 32px rgba(182,200,73,0.30) !important;
+  z-index:14 !important;
+}
+
+.n-step  { font-family:'JetBrains Mono',monospace; font-size:7.5px; letter-spacing:0.16em;
+           text-transform:uppercase; margin-bottom:6px; }
+.n-title { font-size:13.5px; font-weight:700; letter-spacing:-0.01em; line-height:1.25; }
+.n-sub   { font-size:10px; font-weight:400; line-height:1.4; margin-top:4px; }
+.n-pills { display:flex; flex-wrap:wrap; gap:4px; margin-top:9px; }
+.pill {
+  font-family:'JetBrains Mono',monospace; font-size:7px; letter-spacing:0.06em;
+  padding:2px 7px; border-radius:4px; white-space:nowrap;
+}
+.n-accent { position:absolute; left:17px; bottom:9px; width:26px; height:2px; border-radius:2px; }
+
+/* 深卡 · 起点 */
+.k-start { background:var(--dark); width:188px; box-shadow:0 5px 22px rgba(28,26,18,0.16); }
+.k-start::before { content:''; position:absolute; inset:0;
+  background:linear-gradient(135deg, rgba(244,241,232,0.06) 0%, transparent 55%); pointer-events:none; }
+.k-start .n-step  { color:rgba(182,200,73,0.78); }
+.k-start .n-title { color:var(--tw); }
+.k-start .n-sub   { color:var(--tw2); }
+
+/* 深卡 · 里程碑 */
+.k-core {
+  background:var(--dark2); width:236px;
+  border:1px solid rgba(182,200,73,0.22);
+  box-shadow:0 6px 30px rgba(28,26,18,0.24), 0 0 44px rgba(182,200,73,0.07);
+}
+.k-core.live { animation:breathe 4.6s ease-in-out infinite; }
+.k-core::before { content:''; position:absolute; inset:0;
+  background:linear-gradient(135deg, rgba(182,200,73,0.08) 0%, transparent 60%); pointer-events:none; }
+.k-core:hover { box-shadow:0 16px 46px rgba(28,26,18,0.3), 0 0 52px rgba(182,200,73,0.16); }
+.k-core .n-step  { color:rgba(182,200,73,0.8); }
+.k-core .n-title { color:var(--tw); font-size:15px; }
+.k-core .n-sub   { color:var(--tw2); }
+@keyframes breathe {
+  0%,100% { box-shadow:0 6px 30px rgba(28,26,18,0.24), 0 0 40px rgba(182,200,73,0.06); }
+  50%     { box-shadow:0 6px 32px rgba(28,26,18,0.27), 0 0 60px rgba(182,200,73,0.18); }
+}
+
+/* 石白卡 · 普通流程 */
+.k-glass {
+  background:linear-gradient(158deg, rgba(253,251,246,0.88), rgba(242,238,228,0.8)); width:200px;
+  border:1px solid rgba(28,26,18,0.07);
+  box-shadow:0 4px 18px rgba(28,26,18,0.05), inset 0 1px 0 rgba(255,255,255,0.75);
+  backdrop-filter:blur(7px);
+}
+.k-glass:hover { background:linear-gradient(158deg, rgba(255,253,249,0.96), rgba(247,243,233,0.9));
+  box-shadow:0 12px 30px rgba(28,26,18,0.12); }
+.k-glass .n-step  { color:var(--t3); }
+.k-glass .n-title { color:var(--t1); }
+.k-glass .n-sub   { color:var(--t2); }
+.k-glass .pill    { background:rgba(28,26,18,0.06); color:rgba(28,26,18,0.52); }
+
+/* 产出卡 · 绿 */
+.k-out {
+  background:rgba(45,78,48,0.10); width:198px;
+  border:1px solid rgba(45,78,48,0.30);
+  box-shadow:0 3px 16px rgba(45,78,48,0.08);
+}
+.k-out.live { animation:glowpulse 4.4s ease-in-out infinite; }
+.k-out:hover { background:rgba(45,78,48,0.16); box-shadow:0 12px 30px rgba(45,78,48,0.18); }
+.k-out .n-step  { color:var(--kombu); opacity:0.7; }
+.k-out .n-title { color:var(--kombu); }
+.k-out .n-sub   { color:var(--moss); }
+@keyframes glowpulse {
+  0%,100% { box-shadow:0 3px 16px rgba(45,78,48,0.08); }
+  50%     { box-shadow:0 3px 20px rgba(45,78,48,0.18), 0 0 26px rgba(45,78,48,0.10); }
+}
+
+/* 兜底卡 · 锈红 */
+.k-warn {
+  background:rgba(176,106,74,0.10); width:198px;
+  border:1px solid rgba(176,106,74,0.32);
+  box-shadow:0 3px 16px rgba(176,106,74,0.08);
+}
+.k-warn:hover { background:rgba(176,106,74,0.16); box-shadow:0 12px 30px rgba(176,106,74,0.16); }
+.k-warn .n-step  { color:var(--rust); opacity:0.8; }
+.k-warn .n-title { color:#8a4226; }
+.k-warn .n-sub   { color:var(--rust); }
+
+/* 控件 */
+.controls { position:fixed; bottom:28px; right:30px; z-index:50; display:flex; flex-direction:column; gap:6px; }
+.ctrl-btn {
+  width:34px; height:34px; border-radius:8px; cursor:pointer;
+  background:rgba(255,255,255,0.62); border:1px solid rgba(28,26,18,0.12);
+  display:flex; align-items:center; justify-content:center;
+  font-size:16px; color:var(--t2); font-family:'JetBrains Mono',monospace;
+  box-shadow:0 2px 10px rgba(28,26,18,0.06); transition:all 0.18s; user-select:none;
+  backdrop-filter:blur(8px);
+}
+.ctrl-btn:hover { background:rgba(255,255,255,0.85); color:var(--t1); transform:translateY(-1px); }
+.ctrl-btn svg { width:15px; height:15px; }
+.ctrl-sep { height:1px; margin:2px 5px; background:rgba(28,26,18,0.12); }
+
+/* 右侧抽屉 · 可拖拽调宽 + 禁选中（禁选中防拖出一片蓝，参考图截图那种） */
+#drawer {
+  position:fixed; top:0; right:0; bottom:0; z-index:60; width:420px;
+  min-width:320px; max-width:760px;
+  background:#E2DDD0; border-left:1px solid rgba(28,26,18,0.10);
+  padding:26px 30px 0; transform:translateX(100%); visibility:hidden;
+  transition:transform 0.52s var(--expo), visibility 0s linear 0.52s;
+  box-shadow:-8px 0 44px rgba(28,26,18,0.14);
+  overflow:hidden;
+  display:flex; flex-direction:column;
+  user-select:none; -webkit-user-select:none;
+}
+#drawer.open { transform:translateX(0); visibility:visible;
+  transition:transform 0.52s var(--expo), visibility 0s linear 0s; }
+#drawer.resizing { transition:none; }
+/* 左边缘拖拽把手：鼠标移上去光标变左右双箭头，按住拖动改宽度 */
+.drawer-resize {
+  position:absolute; top:0; left:-3px; bottom:0; width:7px; z-index:61; cursor:ew-resize;
+}
+.drawer-resize:hover, .drawer-resize.dragging { background:rgba(74,103,65,0.22); }
+.d-head { display:flex; justify-content:space-between; align-items:flex-start; flex-shrink:0; }
+.d-badge { display:inline-block; font-family:'JetBrains Mono',monospace; font-size:7px;
+  letter-spacing:0.2em; text-transform:uppercase; padding:4px 11px; border-radius:4px; margin-bottom:9px; }
+.d-title { font-size:22px; font-weight:800; letter-spacing:-0.02em; color:#1C1610; }
+.d-sub   { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--t3); letter-spacing:0.05em; margin-top:7px; }
+.d-close { background:none; border:1px solid rgba(28,26,18,0.16); border-radius:6px;
+  padding:6px 12px; cursor:pointer; font-size:15px; color:var(--t3); line-height:1; transition:all 0.16s; }
+.d-close:hover { background:rgba(28,26,18,0.07); color:#1C1610; }
+.d-body { margin:14px auto 0; padding-bottom:28px; width:100%;
+  flex:1; overflow-y:auto; font-size:13.5px; line-height:1.9; color:var(--t2); }
+.d-body .ph {
+  font-size:12px; color:var(--t3); padding:14px 18px;
+  background:rgba(74,103,65,0.06); border-left:2px solid rgba(74,103,65,0.28);
+  border-radius:0 6px 6px 0; line-height:1.8;
+}
+.d-body .ph b { color:var(--moss); font-weight:600; }
+
+/* 抽屉正文排版（内容块阶段用，先备好样式） */
+.d-lead { font-size:14.5px; color:var(--t1); line-height:1.85; margin-bottom:4px; }
+.d-lead b { color:var(--cedar); font-weight:700; }
+.d-sec-l {
+  font-family:'JetBrains Mono',monospace; font-size:8px; letter-spacing:0.18em;
+  text-transform:uppercase; color:var(--t3); margin:20px 0 10px;
+  display:flex; align-items:center; gap:10px;
+}
+.d-sec-l::after { content:''; flex:1; height:1px; background:rgba(28,26,18,0.08); }
+.d-note {
+  font-size:12.5px; color:var(--t2); padding:12px 16px; line-height:1.8;
+  background:rgba(74,103,65,0.07); border-left:2px solid rgba(74,103,65,0.30);
+  border-radius:0 6px 6px 0; margin:12px 0;
+}
+.d-note.amber { background:rgba(184,130,10,0.07); border-left-color:rgba(184,130,10,0.36); }
+.d-note.rust  { background:rgba(176,106,74,0.08); border-left-color:rgba(176,106,74,0.38); }
+.d-note b { color:var(--moss); font-weight:600; }
+.d-note.amber b { color:var(--amber); }
+.d-note.rust b  { color:var(--rust); }
+.d-k {
+  font-family:'JetBrains Mono',monospace; font-size:0.9em;
+  background:rgba(28,26,18,0.06); padding:1px 6px; border-radius:4px; color:var(--cedar);
+}
+.d-rows { display:flex; flex-direction:column; margin:12px 0; }
+.d-row { display:flex; gap:16px; padding:9px 2px; border-bottom:1px solid rgba(28,26,18,0.06); font-size:12.5px; }
+.d-row .rk { flex:0 0 140px; font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--cedar); line-height:1.5; }
+.d-row .rv { flex:1; color:var(--t2); line-height:1.6; }
+.d-ul { margin:10px 0; padding:0; list-style:none; }
+.d-ul li { position:relative; padding-left:19px; margin-bottom:9px; font-size:13px; color:var(--t2); line-height:1.7; }
+.d-ul li::before { content:''; position:absolute; left:4px; top:9px; width:5px; height:5px; border-radius:50%; background:var(--moss); }
+.d-ul li b { color:var(--t1); font-weight:600; }
+.d-body h4 { font-size:11px; font-weight:700; color:var(--t1); text-transform:uppercase; letter-spacing:0.08em; margin:18px 0 7px; }
+.d-body p { margin:8px 0; }
+.d-body code { font-family:'JetBrains Mono',monospace; font-size:11px; background:rgba(28,26,18,0.07); padding:1px 5px; border-radius:3px; color:var(--cedar); }
+.d-body .src { font-family:'JetBrains Mono',monospace; font-size:10.5px; line-height:1.65; background:rgba(28,26,18,0.06); border-left:2px solid rgba(74,103,65,0.40); padding:10px 12px; border-radius:0 6px 6px 0; margin:8px 0; white-space:pre-wrap; word-break:break-word; }
+.d-body .tr { font-size:12px; padding:8px 12px; background:rgba(74,103,65,0.07); border-radius:6px; margin:4px 0 10px; line-height:1.7; }
+.ref { font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--moss); background:rgba(74,103,65,0.12); padding:1px 5px; border-radius:3px; white-space:nowrap; }
+.d-body h4.code, .d-body h4.prompt { padding:5px 10px; border-radius:5px; text-transform:none; font-size:11.5px; letter-spacing:0.02em; }
+.d-body h4.code   { background:rgba(74,103,65,0.12);  color:var(--moss);  border-left:3px solid var(--moss); }
+.d-body h4.prompt { background:rgba(184,130,10,0.13); color:var(--amber); border-left:3px solid var(--amber); }
+.d-body details.d-exp { margin:10px 0; border:1px solid rgba(184,130,10,0.28); border-radius:6px; overflow:hidden; }
+.d-body details.d-exp summary { cursor:pointer; padding:7px 11px; background:rgba(184,130,10,0.07); font-size:11.5px; font-weight:600; color:var(--cedar); display:flex; align-items:center; gap:7px; list-style:none; user-select:none; }
+.d-body details.d-exp summary::-webkit-details-marker { display:none; }
+.d-body details.d-exp summary::before { content:'+'; font-size:11px; color:var(--amber); }
+.d-body details[open].d-exp summary::before { content:'−'; }
+.d-body details.d-exp .exp-in { padding:10px 12px; border-top:1px solid rgba(184,130,10,0.18); }
+
+.d-body::-webkit-scrollbar { width:7px; }
+.d-body::-webkit-scrollbar-track { background:transparent; }
+.d-body::-webkit-scrollbar-thumb { background:rgba(28,26,18,0.16); border-radius:4px; }
+.d-body::-webkit-scrollbar-thumb:hover { background:rgba(28,26,18,0.28); }
+</style>
+</head>
+<body>
+
+<div class="bg-glow"></div>
+<div class="bg-grid"></div>
+<div class="grain"></div>
+
+<div class="hud-divider"></div>
+<div class="hud-left">
+  <div class="hud-acc"></div>
+  <div class="hud-title">RepoHunter</div>
+  <div class="hud-sub">仓库发现与深度排序 · 全景流程图</div>
+</div>
+<div class="hud-right">
+  <div class="hud-badge">Architecture Map</div>
+  <div class="hud-name">New_Repo_Hunter</div>
+</div>
+
+<div id="viewport">
+  <div id="canvas">
+    <svg id="edges"></svg>
+    <div id="labelLayer"></div>
+    <div id="nodeLayer"></div>
+  </div>
+</div>
+
+<div class="controls">
+  <div class="ctrl-btn" id="expandAll" title="全部展开">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7l5 5 5-5"/><path d="M7 13l5 5 5-5"/></svg>
+  </div>
+  <div class="ctrl-btn" id="collapseAll" title="全部收起">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 11l5-5 5 5"/><path d="M7 17l5-5 5 5"/></svg>
+  </div>
+  <div class="ctrl-sep"></div>
+  <div class="ctrl-btn" id="zin">+</div>
+  <div class="ctrl-btn" id="zout">−</div>
+  <div class="ctrl-btn" id="zhome" title="复位">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5"/><path d="M5 9v11h14V9"/></svg>
+  </div>
+</div>
+
+<div id="drawer">
+  <div class="drawer-resize" id="drawer-resize"></div>
+  <div class="d-head">
+    <div>
+      <span class="d-badge" id="d-badge"></span>
+      <div class="d-title" id="d-title"></div>
+      <div class="d-sub" id="d-sub"></div>
+    </div>
+    <button class="d-close" id="d-close">×</button>
+  </div>
+  <div class="d-body" id="d-body"></div>
+</div>
+
+<script>
+/* ─────────────────────────────────────────────────────────
+   节点定义 — 坐标为节点中心 (x,y)；src 是所属模块，决定色标与抽屉徽章
+   kind: start 起点深卡 / core 里程碑深卡 / glass 石白流程卡
+         out 产出绿卡 / warn 兜底红卡
+   当前为地基占位骨架，第 2 到 5 次逐段换成真内容
+   ───────────────────────────────────────────────────────── */
+const NODES = [
+  {id:'A',    x:1180, y:70,   kind:'start', src:'s1', step:'Input',       title:'需求清单',            sub:'keypoints + 语言过滤 入口'},
+  {id:'PIPE', x:1180, y:200,  kind:'core',  src:'s1', step:'Dispatch',    title:'Pipeline 总编排',      sub:'串联五阶段 · 边跑边吐事件流', pills:[['SEARCH','s1'],['MEMORY','hm']]},
+
+  // S1 · 需求理解与检索（左支）与 S2 编标准（右支）并行
+  {id:'QU',   x:880,  y:370,  kind:'glass', src:'s1', step:'S1 · 01',     title:'抽搜索查询',           sub:'从需求清单抽项目身份概念', pills:[['JSON MODE','s1'],['三级兜底','s1']]},
+  {id:'LG',   x:880,  y:490,  kind:'glass', src:'s1', step:'S1 · 02',     title:'语言归一',             sub:'别名 精确 模糊 三级纠错'},
+  {id:'SR',   x:880,  y:610,  kind:'glass', src:'s1', step:'S1 · 03',     title:'并发搜 GitHub',        sub:'剥引号合 OR 组 拼硬过滤'},
+  {id:'MC',   x:1180, y:610,  kind:'glass', src:'s1', step:'S1 · 支撑',   title:'MCP 连接封装',         sub:'握手 重试 返回统一解析'},
+  {id:'POOL', x:880,  y:730,  kind:'out',   src:'s1', step:'Output',      title:'候选仓库池',           sub:'按 full_name 并集去重'},
+  {id:'KU',   x:1480, y:370,  kind:'glass', src:'s2', step:'S2 · 01',     title:'编译判定标准',         sub:'每条 keypoint 一把统一尺子', pills:[['并发独立','s2'],['失败给空串','s2']]},
+
+  // S2 · 汇合后预抓与粗筛（回到中轴，此后每仓库并发）
+  {id:'PF',   x:1180, y:870,  kind:'glass', src:'s2', step:'S2 · 02',     title:'预抓六样资料页',        sub:'README 清洗 两层树 stars size', pills:[['共享 SYSTEM','s2'],['前缀缓存','s2']]},
+  {id:'GATE', x:1180, y:990,  kind:'glass', src:'s2', step:'S2 · 03',     title:'gate 粗筛',            sub:'不带工具一次调用 只判方向'},
+  {id:'SKIP', x:1560, y:1130, kind:'warn',  src:'s2', step:'Skipped',     title:'跳过沉底',             sub:'置灰不淘汰 拿不准一律放行'},
+
+  // S3 · 深挖拆解（中轴续，工具与清理甩左支，逼停熔断甩右支）
+  {id:'CLONE',x:1180, y:1130, kind:'glass', src:'s3', step:'S3 · 01',     title:'浅克隆到本地',         sub:'depth 1 只取当前快照'},
+  {id:'EXP',  x:1180, y:1270, kind:'core',  src:'s3', step:'Explorer',    title:'工具循环深挖',         sub:'读真源码摆事实 只探不判', pills:[['MAX 20','s3'],['半程提醒','s3'],['停滞提醒','s3']]},
+  {id:'TL',   x:820,  y:1270, kind:'glass', src:'s3', step:'S3 · 02',     title:'四个只读工具',         sub:'列 读 搜 找 全对克隆操作'},
+  {id:'STOP', x:1540, y:1270, kind:'warn',  src:'s3', step:'Fallback',    title:'逼停与熔断',           sub:'预算烧光 / 同指纹三连撞'},
+  {id:'CLN',  x:820,  y:1410, kind:'glass', src:'s3', step:'S3 · 03',     title:'滚动清理',             sub:'到线归档旧返回 占位可重读'},
+  {id:'AUD',  x:1180, y:1410, kind:'glass', src:'s3', step:'S3 · 04',     title:'锚点审计自愈',         sub:'打回重修一次 仍坏删点', pills:[['独立额度 3','s3']]},
+  {id:'DIS',  x:1180, y:1530, kind:'out',   src:'s3', step:'Output',      title:'客观架构拆解',         sub:'不含任何 keypoint'},
+
+  // S4 · 辩论与裁决（中轴续，取证甩左支）
+  {id:'FAN',  x:1180, y:1650, kind:'core',  src:'s4', step:'Fan-out',     title:'按 keypoint 扇出',     sub:'每条一条独立链路 全并发', pills:[['先跑一条焐缓存','s4'],['辩论方不带工具','s4']]},
+  {id:'TRI',  x:1180, y:1790, kind:'glass', src:'s4', step:'S4 · 01',     title:'分诊',                 sub:'中立一问 拆解够不够判这条'},
+  {id:'EVD',  x:820,  y:1910, kind:'glass', src:'s4', step:'S4 · 02',     title:'按需取证',             sub:'纯代码照清单抠符号周围', pills:[['0 次模型调用','s4']]},
+  {id:'DEB',  x:1180, y:2030, kind:'glass', src:'s4', step:'S4 · 03',     title:'正反辩论',             sub:'同一份材料 各表一次态'},
+  {id:'ADJ',  x:1180, y:2150, kind:'glass', src:'s4', step:'S4 · 04',     title:'裁决',                 sub:'干净上下文收口 hit / miss'},
+  {id:'SCR',  x:1180, y:2270, kind:'glass', src:'s4', step:'S4 · 05',     title:'对齐与计数',           sub:'按位置对齐 漏判补 miss'},
+  {id:'RES',  x:1180, y:2390, kind:'out',   src:'s4', step:'Final',       title:'排序结果',             sub:'命中数降序 平手比 stars'},
+
+  // 搜索侧记忆（主干右侧，排序完写回）
+  {id:'RUNS', x:1660, y:2270, kind:'glass', src:'hm', step:'Memory',      title:'搜索账本 runs',        sub:'一次搜索一行 轻量增量'},
+  {id:'RM',   x:1660, y:2390, kind:'glass', src:'hm', step:'Memory',      title:'仓库账本 repo_memory', sub:'一仓库一行 拆解分语言格'},
+
+  // 对话区（最下方，接着记忆继续往下走）
+  {id:'CHAT', x:1180, y:2570, kind:'core',  src:'ch', step:'Chat',        title:'对话主循环',           sub:'stream_chat 流式答话 事件流', pills:[['中立事件','ch'],['REACTIVE 硬截','ch']]},
+  {id:'CPT',  x:820,  y:2710, kind:'glass', src:'cm', step:'Compact',     title:'会话压缩',             sub:'笔记优先 摘要兜底 硬截保命', pills:[['40K 触发线','cm']]},
+  {id:'CTX',  x:1180, y:2710, kind:'glass', src:'ch', step:'Chat · 02',   title:'拼 system',            sub:'人设 索引 注入仓库 召回段'},
+  {id:'EXT',  x:1540, y:2710, kind:'glass', src:'cm', step:'Extract',     title:'记忆提取',             sub:'攒 12 条或说「记住」 单飞补跑'},
+  {id:'NOTE', x:1900, y:2710, kind:'glass', src:'cm', step:'Note',        title:'会话笔记',             sub:'攒 1500 tok 整份重写'},
+  {id:'RCL',  x:1180, y:2830, kind:'glass', src:'cm', step:'Recall',      title:'按需召回',             sub:'小模型挑选器 三档输出'},
+];
+
+/* 连线 — 默认 b 到 t 正交折线；fs/ts 改锚点边；ch 走指定竖向通道；lbl 边标签 */
+const EDGES = [
+  {f:'A',    t:'PIPE'},
+  {f:'PIPE', t:'QU',   lbl:'抽查询'},
+  {f:'PIPE', t:'KU',   lbl:'并行编标准'},
+  {f:'PIPE', t:'MC',   lbl:'开 MCP 连接'},
+  {f:'QU',   t:'LG'}, {f:'LG', t:'SR'}, {f:'SR', t:'POOL'},
+  {f:'MC',   t:'SR',   fs:'l', ts:'r', lbl:'session'},
+  {f:'POOL', t:'PF',   lbl:'候选池'},
+  {f:'KU',   t:'PF',   lbl:'判定标准'},
+  {f:'PF',   t:'GATE'},
+  {f:'GATE', t:'SKIP', lbl:'明显不符'},
+  {f:'GATE', t:'CLONE',lbl:'放行'},
+  {f:'CLONE',t:'EXP'},
+  {f:'EXP',  t:'TL',   fs:'l', ts:'r', lbl:'每轮调用'},
+  {f:'TL',   t:'CLN',  lbl:'读得越多越要清'},
+  {f:'EXP',  t:'STOP', fs:'r', ts:'l', lbl:'烧光 / 空转'},
+  {f:'EXP',  t:'AUD',  lbl:'最终 JSON'},
+  {f:'STOP', t:'AUD',  lbl:'逼停出的 JSON 同过审计'},
+  {f:'AUD',  t:'DIS'},
+  {f:'DIS',  t:'FAN'},
+  {f:'FAN',  t:'TRI',  lbl:'每条 keypoint'},
+  {f:'TRI',  t:'EVD',  lbl:'不够 开清单'},
+  {f:'TRI',  t:'DEB',  lbl:'够判 直接辩'},
+  {f:'EVD',  t:'DEB'},
+  {f:'DEB',  t:'ADJ'},
+  {f:'ADJ',  t:'SCR'},
+  {f:'SCR',  t:'RES'},
+  {f:'SCR',  t:'RUNS', type:'dash', fs:'r', ts:'l', lbl:'save_run 写回'},
+  {f:'RUNS', t:'RM',   lbl:'upsert 追时间线'},
+  {f:'RM',   t:'CHAT', type:'dash', lbl:'拆解读回对话侧'},
+  {f:'CHAT', t:'CPT',  lbl:'答前压缩'},
+  {f:'CHAT', t:'CTX',  lbl:'拼 system'},
+  {f:'CHAT', t:'EXT',  lbl:'聊完后台提取'},
+  {f:'CHAT', t:'NOTE', lbl:'聊完续写笔记'},
+  {f:'CTX',  t:'RCL',  lbl:'先跑挑选器'},
+  {f:'RCL',  t:'CTX',  type:'feedback', fs:'r', ts:'r', ch:1380, lbl:'命中补段'},
+];
+
+/* 区域水印 */
+const REGIONS = [
+  {x:880,  y:300,  t:'S1 · Query & Search'},
+  {x:1480, y:300,  t:'S2 · Pre-Filter'},
+  {x:880,  y:1200, t:'S3 · Content Filter'},
+  {x:880,  y:1720, t:'S4 · Debate & Adjudicate'},
+  {x:1660, y:2200, t:'Search Memory'},
+  {x:1580, y:2570, t:'Chat & Memory'},
+];
+
+/* 模块色 — 卡片色标与抽屉徽章用；石白卡的模块归属就靠这一道色标 */
+const SRC = {
+  s1:'#5878A0',   // 灰蓝 · 需求理解与检索
+  s2:'#A88C35',   // 芥末 · 编译标准与粗筛
+  s3:'#4A7858',   // 苔绿 · 深挖拆解
+  s4:'#94694B',   // 雪松褐 · 辩论与裁决
+  hm:'#3E6E82',   // 青蓝 · 搜索侧记忆
+  ch:'#897595',   // 灰紫 · 对话主循环
+  cm:'#728068',   // 鼠尾草 · 对话侧记忆
+};
+const SRCNAME = {
+  s1:'S1 需求理解与检索', s2:'S2 编译标准与粗筛', s3:'S3 深挖拆解',
+  s4:'S4 辩论与裁决', hm:'搜索侧记忆', ch:'对话主循环', cm:'对话侧记忆',
+};
+function hexA(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`;
+}
+
+/* ── 渲染 ───────────────────────────────────────────── */
+const nodeLayer = document.getElementById('nodeLayer');
+const labelLayer = document.getElementById('labelLayer');
+const svg = document.getElementById('edges');
+const byId = {};
+
+REGIONS.forEach(r => {
+  const el = document.createElement('div');
+  el.className = 'region';
+  el.style.left = r.x + 'px'; el.style.top = r.y + 'px';
+  el.innerHTML = '<span class="r-tick"></span>' + r.t;
+  nodeLayer.appendChild(el);
+});
+
+NODES.forEach(n => {
+  byId[n.id] = n;
+  const col = SRC[n.src];
+  const dark = (n.kind === 'core' || n.kind === 'start');
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.style.left = n.x + 'px'; el.style.top = n.y + 'px';
+  let pills = '';
+  if (n.pills) {
+    pills = '<div class="n-pills">' + n.pills.map(p => {
+      const pc2 = SRC[p[1]] || col;
+      const pb = dark ? hexA(pc2, 0.24) : 'rgba(28,26,18,0.06)';
+      const pc = dark ? hexA('#F4F1E8', 0.8) : 'rgba(28,26,18,0.52)';
+      return `<span class="pill" style="background:${pb};color:${pc};">${p[0]}</span>`;
+    }).join('') + '</div>';
+  }
+  el.innerHTML = `
+    <div class="card k-${n.kind}" data-id="${n.id}">
+      <div class="n-step">${n.step}</div>
+      <div class="n-title">${n.title}</div>
+      <div class="n-sub">${n.sub}</div>
+      ${pills}
+      <div class="n-accent" style="background:${col};${dark?'filter:brightness(1.7) saturate(0.85);':''}"></div>
+    </div>
+    <div class="node-badge" data-badge="${n.id}"></div>`;
+  nodeLayer.appendChild(el);
+  const card = el.firstElementChild;
+  n._wrap = el; n._el = card; n._badge = el.querySelector('.node-badge');
+  n._w = card.offsetWidth; n._h = card.offsetHeight;
+});
+
+/* ── 正交折线连线 ───────────────────────────────────── */
+function anchor(n, side) {
+  const hw = n._w/2, hh = n._h/2;
+  switch (side) {
+    case 't': return {x:n.x,    y:n.y-hh};
+    case 'b': return {x:n.x,    y:n.y+hh};
+    case 'l': return {x:n.x-hw, y:n.y};
+    case 'r': return {x:n.x+hw, y:n.y};
+  }
+}
+function routePoints(e, a, b) {
+  if (e.ch != null) return [a, {x:e.ch, y:a.y}, {x:e.ch, y:b.y}, b];
+  const fs = e.fs || 'b';
+  if (fs === 'l' || fs === 'r') {
+    if (Math.abs(a.y - b.y) < 1) return [a, b];
+    const mx = (a.x + b.x)/2;
+    return [a, {x:mx, y:a.y}, {x:mx, y:b.y}, b];
+  }
+  if (Math.abs(a.x - b.x) < 1) return [a, b];
+  const my = a.y + (b.y - a.y)*0.5;
+  return [a, {x:a.x, y:my}, {x:b.x, y:my}, b];
+}
+function roundedPath(pts, r) {
+  if (pts.length < 2) return '';
+  if (pts.length === 2) return `M${pts[0].x},${pts[0].y} L${pts[1].x},${pts[1].y}`;
+  let d = `M${pts[0].x},${pts[0].y}`;
+  for (let i = 1; i < pts.length-1; i++) {
+    const p = pts[i], prev = pts[i-1], next = pts[i+1];
+    const d1 = Math.min(r, Math.hypot(p.x-prev.x, p.y-prev.y)/2);
+    const d2 = Math.min(r, Math.hypot(next.x-p.x, next.y-p.y)/2);
+    const u1 = {x:(prev.x-p.x), y:(prev.y-p.y)}, l1 = Math.hypot(u1.x,u1.y)||1;
+    const u2 = {x:(next.x-p.x), y:(next.y-p.y)}, l2 = Math.hypot(u2.x,u2.y)||1;
+    const a = {x:p.x + u1.x/l1*d1, y:p.y + u1.y/l1*d1};
+    const c = {x:p.x + u2.x/l2*d2, y:p.y + u2.y/l2*d2};
+    d += ` L${a.x},${a.y} Q${p.x},${p.y} ${c.x},${c.y}`;
+  }
+  const last = pts[pts.length-1];
+  d += ` L${last.x},${last.y}`;
+  return d;
+}
+
+const DEFS = `<defs>
+<marker id="arr"  markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="rgba(28,26,18,0.42)"/></marker>
+<marker id="arrA" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="rgba(184,130,10,0.62)"/></marker>
+<marker id="arrT" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto" markerUnits="userSpaceOnUse"><path d="M0,0 L6,3 L0,6 Z" fill="rgba(58,106,102,0.62)"/></marker>
+</defs>`;
+
+function buildEdges() {
+  let paths = '';
+  let labels = '';
+  EDGES.forEach((e, idx) => {
+    const a = anchor(byId[e.f], e.fs || 'b');
+    const b = anchor(byId[e.t], e.ts || 't');
+    const pts = routePoints(e, a, b);
+    const d = roundedPath(pts, 13);
+    const marker = e.type === 'dash' ? 'arrA' : e.type === 'feedback' ? 'arrT' : 'arr';
+    const cls = e.type ? `e-${e.type}` : 'e-norm';
+    paths += `<path class="edge-base ${cls}" data-i="${idx}" d="${d}" marker-end="url(#${marker})"/>`;
+    if (!e.type) paths += `<path class="edge-flow" data-i="${idx}" d="${d}"/>`;
+    if (e.lbl) {
+      const lp = pts.length >= 4
+        ? {x:(pts[1].x+pts[2].x)/2, y:(pts[1].y+pts[2].y)/2}
+        : {x:(pts[0].x+pts[pts.length-1].x)/2, y:(pts[0].y+pts[pts.length-1].y)/2};
+      labels += `<div class="elabel" data-i="${idx}" style="left:${lp.x}px;top:${lp.y}px">${e.lbl}</div>`;
+    }
+  });
+  svg.innerHTML = DEFS + paths;
+  labelLayer.innerHTML = labels;
+}
+buildEdges();
+
+const edgeEls = EDGES.map((e, idx) => ({
+  base:  svg.querySelector(`.edge-base[data-i="${idx}"]`),
+  flow:  svg.querySelector(`.edge-flow[data-i="${idx}"]`),
+  label: labelLayer.querySelector(`.elabel[data-i="${idx}"]`),
+}));
+
+/* ── 拓扑：邻接表 + 可达性 + 独占下游计数 ── */
+const childEdges = {};
+EDGES.forEach((e, idx) => { (childEdges[e.f] = childEdges[e.f] || []).push({ idx, v: e.t }); });
+const ROOT = NODES[0].id;
+
+function reachable(blocked) {
+  const vis = new Set([ROOT]); const q = [ROOT];
+  while (q.length) {
+    const u = q.shift();
+    if (blocked.has(u)) continue;
+    (childEdges[u] || []).forEach(({ v }) => { if (!vis.has(v)) { vis.add(v); q.push(v); } });
+  }
+  return vis;
+}
+const TOTAL = NODES.length;
+const exCount = {};
+NODES.forEach(n => { exCount[n.id] = TOTAL - reachable(new Set([n.id])).size; });
+
+/* ── 藤蔓生长入场：按真实拓扑逐级蔓延 ── */
+function animateGrowth() {
+  const SPEED = 0.5, GAP = 55, MINDUR = 175;
+  const L = edgeEls.map(x => x.base ? x.base.getTotalLength() : 0);
+  const growDur = i => Math.max(MINDUR, L[i] * SPEED);
+
+  const arrive = {}; arrive[ROOT] = 0;
+  const eStart = new Array(EDGES.length).fill(null);
+  for (let it = 0; it < NODES.length + 2; it++) {
+    let changed = false;
+    EDGES.forEach((e, i) => {
+      if (e.type === 'feedback') return;
+      const au = arrive[e.f]; if (au == null) return;
+      if (eStart[i] == null || au < eStart[i]) { eStart[i] = au; changed = true; }
+      const rv = au + growDur(i) + GAP;
+      if (arrive[e.t] == null || rv < arrive[e.t]) { arrive[e.t] = rv; changed = true; }
+    });
+    if (!changed) break;
+  }
+  EDGES.forEach((e, i) => { if (eStart[i] == null) eStart[i] = (arrive[e.f] != null ? arrive[e.f] : 0); });
+
+  let maxEnd = 0;
+  EDGES.forEach((e, i) => {
+    const p = edgeEls[i].base; if (!p) return;
+    const len = L[i], dur = growDur(i), delay = eStart[i];
+    const mk = p.getAttribute('marker-end');
+    p.removeAttribute('marker-end');
+    p.style.strokeDasharray = len + ' ' + len;
+    p.style.strokeDashoffset = len;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      p.style.transition = `stroke-dashoffset ${dur}ms cubic-bezier(0.37,0,0.4,1) ${delay}ms`;
+      p.style.strokeDashoffset = '0';
+    }));
+    const end = delay + dur;
+    maxEnd = Math.max(maxEnd, end);
+    setTimeout(() => {
+      p.style.transition = ''; p.style.strokeDasharray = ''; p.style.strokeDashoffset = '';
+      if (mk) p.setAttribute('marker-end', mk);
+      if (edgeEls[i].label) edgeEls[i].label.classList.add('show');
+    }, end + 30);
+  });
+
+  NODES.forEach(n => {
+    const t = arrive[n.id] != null ? arrive[n.id] : 0;
+    setTimeout(() => { if (n._el) n._el.classList.add('shown'); }, t);
+  });
+
+  setTimeout(() => {
+    document.querySelectorAll('.edge-flow').forEach(f => f.classList.add('live'));
+    document.querySelectorAll('.k-core, .k-out').forEach(c => c.classList.add('live'));
+  }, maxEnd + 200);
+}
+requestAnimationFrame(() => {
+  try { animateGrowth(); }
+  catch (err) {
+    // 兜底：动画异常也保证节点、连线、标签全部可见，绝不留白屏
+    NODES.forEach(n => n._el && n._el.classList.add('shown'));
+    document.querySelectorAll('.edge-flow, .k-core, .k-out').forEach(c => c.classList.add('live'));
+    document.querySelectorAll('.elabel').forEach(l => l.classList.add('show'));
+  }
+});
+
+/* ── 折叠 / 展开：右键节点折叠其独占下游 ── */
+const collapsed = new Set();
+function applyVisibility() {
+  const vis = reachable(collapsed);
+  NODES.forEach(n => n._wrap.classList.toggle('collapsed-hidden', !vis.has(n.id)));
+  EDGES.forEach((e, idx) => {
+    const show = vis.has(e.f) && !collapsed.has(e.f) && vis.has(e.t);
+    const els = edgeEls[idx];
+    els.base  && els.base.classList.toggle('ehidden', !show);
+    els.flow  && els.flow.classList.toggle('ehidden', !show);
+    els.label && els.label.classList.toggle('ehidden', !show);
+  });
+  NODES.forEach(n => {
+    const on = collapsed.has(n.id) && vis.has(n.id) && exCount[n.id] > 0;
+    if (on) { n._badge.textContent = '+' + exCount[n.id]; n._badge.classList.add('on'); }
+    else n._badge.classList.remove('on');
+  });
+}
+function toggleCollapse(id) {
+  if (exCount[id] <= 0) return;
+  if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
+  applyVisibility();
+}
+function collapseAll() {
+  collapsed.clear();
+  NODES.forEach(n => { if (exCount[n.id] > 0) collapsed.add(n.id); });
+  applyVisibility();
+}
+function expandAll() { collapsed.clear(); applyVisibility(); }
+
+/* ── 平移缩放 ── */
+const viewport = document.getElementById('viewport');
+const canvas = document.getElementById('canvas');
+let tx=0, ty=0, scale=1;
+
+function contentBox() {
+  const xs1 = NODES.map(n => n.x - n._w/2), xs2 = NODES.map(n => n.x + n._w/2);
+  const ys1 = NODES.map(n => n.y - n._h/2), ys2 = NODES.map(n => n.y + n._h/2);
+  const x = Math.min(...xs1) - 40, y = Math.min(...ys1) - 30;
+  return {x, y, w:Math.max(...xs2)+40-x, h:Math.max(...ys2)+30-y};
+}
+function apply() { canvas.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`; }
+function fit() {
+  const c = contentBox();
+  const vw = innerWidth, vh = innerHeight;
+  scale = Math.min(vw/c.w, vh/c.h) * 0.92;
+  tx = (vw - c.w*scale)/2 - c.x*scale;
+  ty = (vh - c.h*scale)/2 - c.y*scale + 12;
+  apply();
+}
+fit();
+
+function zoomAt(mx, my, factor) {
+  const ns = Math.max(0.18, Math.min(2.4, scale*factor));
+  const k = ns/scale;
+  tx = mx - (mx - tx)*k;
+  ty = my - (my - ty)*k;
+  scale = ns; apply();
+}
+viewport.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = viewport.getBoundingClientRect();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, e.deltaY < 0 ? 1.12 : 0.893);
+}, {passive:false});
+
+let down=false, moved=false, sx=0, sy=0, tx0=0, ty0=0, downTarget=null;
+viewport.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
+  down=true; moved=false; sx=e.clientX; sy=e.clientY; tx0=tx; ty0=ty;
+  downTarget = e.target;
+  viewport.classList.add('grabbing');
+  viewport.setPointerCapture(e.pointerId);
+});
+viewport.addEventListener('pointermove', e => {
+  if (!down) return;
+  const dx=e.clientX-sx, dy=e.clientY-sy;
+  if (Math.hypot(dx,dy) > 4) moved=true;
+  tx = tx0+dx; ty = ty0+dy; apply();
+});
+viewport.addEventListener('pointerup', e => {
+  if (e.button !== 0) return;
+  down=false; viewport.classList.remove('grabbing');
+  if (!moved && downTarget) {
+    const badge = downTarget.closest('.node-badge');
+    if (badge && badge.classList.contains('on')) { toggleCollapse(badge.dataset.badge); downTarget = null; return; }
+    const card = downTarget.closest('.card');
+    if (card) openDrawer(card.dataset.id);
+  }
+  downTarget = null;
+});
+viewport.addEventListener('contextmenu', e => {
+  const card = e.target.closest('.card');
+  if (card) { e.preventDefault(); toggleCollapse(card.dataset.id); }
+});
+
+document.getElementById('zin').onclick   = () => zoomAt(innerWidth/2, innerHeight/2, 1.2);
+document.getElementById('zout').onclick  = () => zoomAt(innerWidth/2, innerHeight/2, 0.833);
+document.getElementById('zhome').onclick = fit;
+document.getElementById('expandAll').onclick   = expandAll;
+document.getElementById('collapseAll').onclick = collapseAll;
+addEventListener('resize', fit);
+
+/* ── 抽屉正文 · 已填 S1，其余占位节点待后续内容块填入 ── */
+const BODIES = {
+A: `<p class="d-lead">整条搜索流水线的<b>入口</b>。用户在前端填的东西打包成一个 params 进来。<span class="ref">pipeline.py:86</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">keypoints</div><div class="rv">一条条写的需求清单，每条一句</div></div>
+<div class="d-row"><div class="rk">languages</div><div class="rv">项目语言过滤，手填、可能有错别字</div></div>
+<div class="d-row"><div class="rk">top_k</div><div class="rv">每路查询召回多少，默认 20、最大 100</div></div>
+<div class="d-row"><div class="rk">use_memory</div><div class="rv">记忆开关，只挡读不挡写</div></div>
+<div class="d-row"><div class="rk">output_language</div><div class="rv">全链路语言，中文或英文</div></div>
+</div>
+<div class="d-note">keypoints 一身两用：既是 QU 抽查询的原料，也是 S4 逐条裁决的清单本体，从头到尾<b>不被改写</b>。</div>`,
+
+PIPE: `<p class="d-lead">搜索流水线的总编排 <span class="d-k">run_pipeline</span>，把五个阶段串成一条流，边跑边 yield 中性事件 dict，webapp 那层再包成 SSE。<span class="ref">pipeline.py:68</span></p>
+<details class="d-exp"><summary>背景 · 为什么做 RepoHunter</summary><div class="exp-in">
+<p>想吃透一个新领域，最好的教材是几份高质量的开源实现。找到并读懂它们，直接用 Claude Code 来做有四处硬伤：</p>
+<ul class="d-ul">
+<li><b>不能批量检索</b> · 一次会话只能围绕一个仓库，几十个候选无法并行筛选</li>
+<li><b>探查浅、需反复追加</b> · 默认读几个文件就下结论，想深入须一轮轮追加指令，需人工全程盯守</li>
+<li><b>没有标准化拆解</b> · 每个项目读法与产出格式各不相同，无法汇入一张表横向比较</li>
+<li><b>没有界面与记忆</b> · 过程不可见、结果散落在对话中，更换会话即全部归零，同一仓库重复付费</li>
+</ul>
+<p>RepoHunter 把这件事做成一条无人值守的流水线：标准化探查、对抗核验、全并发、工作台与长期记忆。</p>
+</div></details>
+<div class="d-sec-l">五个阶段</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">1 · QU 抽查询</div><div class="rv">需求清单抽出 GitHub 搜索查询 <span class="ref">pipeline.py:94</span></div></div>
+<div class="d-row"><div class="rk">1.5 · KU 编标准</div><div class="rv">每条 keypoint 编译成一句判定标准 <span class="ref">pipeline.py:101</span></div></div>
+<div class="d-row"><div class="rk">2 · 检索</div><div class="rv">开 MCP 连接并发搜，去重成候选池 <span class="ref">pipeline.py:106</span></div></div>
+<div class="d-row"><div class="rk">3 · Repo_Detection</div><div class="rv">每仓库并发跑 gate 深挖辩论 <span class="ref">pipeline.py:139</span></div></div>
+<div class="d-row"><div class="rk">4 · 写回</div><div class="rv">save_run 一次写两张表 <span class="ref">pipeline.py:172</span></div></div>
+</div>
+<h4 class="code">代码约束 · 开跑先清两样</h4>
+<p>每次 run 先清全局 token 累计（否则跨 run 越加越多）<span class="ref">pipeline.py:81</span>，再清上一轮留在 data/tmp 的克隆 <span class="ref">pipeline.py:84</span>。</p>
+<div class="d-note">写回记忆<b>不受 use_memory 开关影响</b>，开关只挡读不挡写，关一次也不漏存 <span class="ref">pipeline.py:169</span>。存失败只告警，绝不让已经跑出来的结果因为存库失败而报错。</div>
+<div class="d-note amber">零星 print 由替身 stdout <span class="d-k">_Tee</span> 兜着：既照常打终端，又按行转成 content_log 事件实时推前端 <span class="ref">pipeline.py:29</span>。</div>
+<details class="d-exp"><summary>设计 · 手写 asyncio 而非 LangGraph / CrewAI</summary><div class="exp-in">
+<p>多 agent 编排（正反并行取证、独立裁决、每条 keypoint 一条链路、仓库间全并发）采用手写 asyncio，未套用编排框架。并非不会用，而是框架会丢掉核心的成本优化。</p>
+<p><b>省钱主线全部依赖字节级前缀缓存。</b>DeepSeek 按「模型 + 前缀」分池，同段前缀第二次发送几乎不计费。同一仓库的 gate、explorer、辩论各方共享逐字节相同的资料页 system，多轮只向末尾追加、不改写历史，提醒与工具 schema 都固化为常量以保证字节一致。实测 top10 命中率约 <b>60%</b>、单次成本降低约 <b>70%</b>。</p>
+<p>框架为实现状态管理，会插入节点元数据、为各 agent 维护独立历史、在节点间重新拼装状态，本应共享的前缀因此对不上。若在框架内强行保证字节对齐，等于绕过其消息管理自行接管，框架也就失去价值。两级并发闸、独立修复额度、上下文滚动清理、死循环熔断这些贴合场景的兜底，框架同样无法提供。</p>
+</div></details>`,
+
+QU: `<p class="d-lead">一次大模型调用，从需求清单里抽出 GitHub 能搜的查询串。keypoints 本身<b>原样带回不改写</b>，模型顺手吐的那份不要。<span class="ref">query_understanding.py:17</span><span class="ref">query_understanding.py:97</span></p>
+<details class="d-exp"><summary>踩坑 · QU 最初想一次产出六项，全面失准</summary><div class="exp-in">
+<p>最初 QU 一次要产出六项：queries、一般 keypoint、优先 keypoint、领域、类型、语言。初衷是拆得越细、后续筛选打分越有依据，实际问题接连暴露：</p>
+<ul class="d-ul">
+<li><b>优先级摊薄判定点</b> · 需求本就模糊、可判定的关键点不多，再分「一般 / 优先」两组各自更稀疏。曾把最核心的 multi-agent 归入优先组，一般组只剩一条，最关键的概念反而不在主 keypoint 中。</li>
+<li><b>60 分悬崖</b> · 旧打分为 hit /(hit+miss)、过线 60。两条 keypoint 时只有 0 / 50 / 100 三档，一条 miss 就从 100 跌到 50、无法过线，命中率没有平滑过渡。</li>
+<li><b>领域类型语言不可控</b> · 全凭 LLM 对一句模糊表述的理解，语言尤其常填 null 或随意推测，无法复现。这三项用户本就清楚，可直接在前端选定。</li>
+</ul>
+<p>三处问题指向同一方向：剥离 QU 不该承担的职责。keypoint 不再分优先级、领域类型语言改为前端字段、取消打分与过线改成命中数排序。QU 自此只负责抽取 queries，输出由六项收窄到两项，可控性反而提升。</p>
+</div></details>
+<h4 class="prompt">提示词约束 · 铁律严禁瞎编</h4>
+<p>skill 只许提取用户真正说出的概念：同一概念扩同义词、单复数、缩写可以，扩成用户没提的另一个概念不行。中英混写的概念要抓全（「多agent」= multi-agent），抓全后统一翻英文。功能要求一律不进 query，只留项目身份概念，因为 GitHub 里空格分隔是 AND，每多一组召回窄一截。<span class="ref">skills/query_understanding.md</span></p>
+<details class="d-exp"><summary>skill 原文关键段</summary><div class="exp-in"><div class="src">- OR 项严禁加引号，带空格的写法也直接写。引号短语和别的项 OR 在一起，GitHub 会静默返回 0 个结果。
+- 严禁纯简写。OR 组里除了简写，必须至少放一个最关键的全称写法。
+- queries 只放项目的核心身份概念，用户那些具体功能要求一律不进 queries。</div></div></details>
+<h4 class="code">代码约束 · 输出 JSON 三级兜底</h4>
+<ul class="d-ul">
+<li><b>第一级</b> · response_format 强制 JSON 模式，直接整段解析 <span class="ref">query_understanding.py:41</span></li>
+<li><b>第二级</b> · 破损输出塞回 assistant、追一条修格式指令重试，前缀不变保缓存命中 <span class="ref">query_understanding.py:79</span></li>
+<li><b>第三级</b> · 正则抠最外层 JSON 对象；实在抠不出，警告并给空壳 {"queries": []} <span class="ref">query_understanding.py:50</span><span class="ref">query_understanding.py:94</span></li>
+</ul>
+<div class="d-note">skill 进 system、需求清单拼成 user，每条一行；重试只往末尾追加、不改历史，DeepSeek 前缀缓存才能命中。跑完打印本阶段 token 和命中率 <span class="ref">query_understanding.py:99</span>。</div>`,
+
+LG: `<p class="d-lead">用户手填的语言难免写错（py、golang、jupyter），这步把它们纠回 GitHub 认的规范名，当检索的<b>硬过滤</b>。<span class="ref">repo_languages.py:78</span></p>
+<div class="d-sec-l">单个词的三级归一</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">1 · 别名表</div><div class="rv">py 到 Python、golang 到 Go 这类常见简写 <span class="ref">repo_languages.py:20</span></div></div>
+<div class="d-row"><div class="rk">2 · 精确匹配</div><div class="rv">忽略大小写对规范名表 <span class="ref">repo_languages.py:13</span></div></div>
+<div class="d-row"><div class="rk">3 · 模糊匹配</div><div class="rv">difflib 相似度 0.8 起步，纠拼写错误 <span class="ref">repo_languages.py:69</span></div></div>
+</div>
+<h4 class="code">代码约束 · 两道防错纠</h4>
+<p>两字母以内的短词不走模糊（ros 会被算得很像别名 rs，错纠比不纠更糟）<span class="ref">repo_languages.py:67</span>。三级都认不出的原样保留并警告，不擅自丢掉用户的输入 <span class="ref">repo_languages.py:104</span>。</p>
+<div class="d-note">Python 和 Jupyter Notebook 天然不互斥，绑成耦合组：选一个就把另一个一起搜，最后去重保序 <span class="ref">repo_languages.py:41</span><span class="ref">repo_languages.py:112</span>。</div>`,
+
+MC: `<p class="d-lead">GitHub MCP 连接的封装，检索阶段先从这里拿连接、搜完自动断开。<span class="ref">clients.py:22</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">mcp_session</div><div class="rv">异步上下文管理器：httpx 带 PAT 鉴权头、握手、把 session 交出去 <span class="ref">clients.py:32</span></div></div>
+<div class="d-row"><div class="rk">call_tool</div><div class="rv">调一个 MCP 工具，失败等 5 秒重试、最多 5 次，最后一次仍失败才上抛 <span class="ref">clients.py:44</span></div></div>
+<div class="d-row"><div class="rk">parse_tool_result</div><div class="rv">把工具返回统一成 dict 或 list，优先取结构化字段 <span class="ref">clients.py:67</span></div></div>
+</div>
+<div class="d-note">PAT <b>运行时才从 config 取</b>，不能在 import 时固化，因为密钥是前端填完注入的 <span class="ref">clients.py:31</span>。search_repo 只管拼查询，连上和断开归这里管。</div>`,
+
+SR: `<p class="d-lead">把 QU 给的多路查询并发发给 GitHub 仓库搜索。发之前每条 query 先过一道<b>规范化</b>，防 GitHub 静默吞结果。<span class="ref">search_repo.py:19</span></p>
+<h4 class="code">代码约束 · explode 规范查询</h4>
+<p>带引号短语和别的项 OR 在一起，GitHub 会<b>静默返回 0 结果</b>。所以把每条 query 按 OR 拆开、逐项剥掉引号、去重，再合回一个 OR 组，一条 query 永远只发一路；in: 这类尾部修饰符摘出来拼回去。模型本该按 skill 不吐引号，这里再兜一道。<span class="ref">search_repo.py:47</span></p>
+<h4 class="code">代码约束 · 拼硬过滤</h4>
+<ul class="d-ul">
+<li><b>语言</b> · 归一后的每个语言加 language: 限定，带空格的语言名要加引号（language:"Jupyter Notebook"）<span class="ref">search_repo.py:79</span></li>
+<li><b>归档与 fork</b> · archived:false fork:false 默认排除 <span class="ref">search_repo.py:86</span></li>
+<li><b>完整对象</b> · minimal_output 显式关掉，stars 和 size 才有值，后面 gate 判体量要用 <span class="ref">search_repo.py:90</span></li>
+</ul>
+<div class="d-note amber">某路 0 结果多半是查询写法有问题，<b>警告一声不静默吞掉</b>，好排查 <span class="ref">search_repo.py:102</span>。多路查询 asyncio.gather 并发、保序 <span class="ref">search_repo.py:118</span>。</div>`,
+
+POOL: `<p class="d-lead">多路搜索结果按 <span class="d-k">full_name</span> <b>并集去重</b>，多路命中同一个仓库只留一份，拼成候选池交给下游。<span class="ref">search_repo.py:121</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">full_name</div><div class="rv">owner/repo，全流程的仓库唯一键</div></div>
+<div class="d-row"><div class="rk">description</div><div class="rv">仓库一句话描述</div></div>
+<div class="d-row"><div class="rk">topics</div><div class="rv">仓库标签列表</div></div>
+<div class="d-row"><div class="rk">stars / size</div><div class="rv">星数和体积，gate 判方向和体量用</div></div>
+</div>
+<div class="d-note">返回的仓库对象被 slim 削到只剩这五个字段 <span class="ref">search_repo.py:104</span>。单条 query 去重后不超 top_k；QU 给多条才可能更多（各一路取并集）。搜完 yield search_done 事件回显给前端 <span class="ref">pipeline.py:108</span>。</div>`,
+
+KU: `<p class="d-lead">把每条模糊的自然语言需求编译成<b>一句可判定的标准</b>，让所有仓库、所有判定用同一把尺子，消掉跨仓库标准漂移。<span class="ref">keypoint_understanding.py:40</span><span class="ref">content_filter.py:120</span></p>
+<details class="d-exp"><summary>踩坑 · 同一条 keypoint 在不同仓库判出不同标准</summary><div class="exp-in">
+<p>keypoint 是用户手写的自然语言，缺乏边界，横向对比即失准。一次真实搜索中「有提供训练数据」这一条：</p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">databrickslabs/dolly</div><div class="rv">代码从 HuggingFace 加载 dolly-15k，仓库内无数据文件 · 判 hit</div></div>
+<div class="d-row"><div class="rk">huggingface/trl</div><div class="rv">提供数据集加载脚本，需外部下载 · 判 miss</div></div>
+</div>
+<p>两者本质相同、判定相反。根因在于每个仓库的裁决是一次独立调用、彼此不可见，「提供」的操作化定义在每场辩论中被临时各自界定。单场自洽，横向不一致，而排序恰恰是横向比较命中数，命中数因此失真。</p>
+<p>曾考虑在裁决后追加一次「横向一致性复核」拼表纠偏，最终否决：这属于下游补丁，每次搜索都需付出常备成本，且复核方未读过代码，可能缺少按新标准判定所需的证据。问题出在上游，就在上游解决，落地即 KU。</p>
+</div></details>
+<h4 class="prompt">提示词约束 · 只解释 不添加</h4>
+<p>标准只能把用户已说出的意思说明确，不许塞用户没说的要求。写完自查：标准里每个限定词，用户原话里有出处吗，找不到的删掉。数字型需求也写自然语言标准、不写死精确阈值。<span class="ref">skills/keypoint_understanding.md</span></p>
+<details class="d-exp"><summary>skill 例子（正反对照）</summary><div class="exp-in"><div class="src">输入：有提供训练数据
+正例：仓库内含现成数据文件、或代码有指明具体数据集可直接跑的加载管线，算。只给下载链接、或只有构造脚本需自行制备的不算
+反例（加戏）：…且数据量不少于一万条、为高质量人工标注才算
+「不少于一万条」「高质量标注」用户没提，凭空加的。</div></div></details>
+<h4 class="code">代码约束 · 单条失败不挡流程</h4>
+<p>每条 keypoint 独立发一次请求、全部并发；模型只吐一句话、不用输出 JSON，没有格式解析这一步。单条调用异常就给空串，其余条不受影响、主流程照走。<span class="ref">keypoint_understanding.py:59</span><span class="ref">keypoint_understanding.py:36</span></p>
+<div class="d-note">编出的标准三处复用：回显给用户看系统怎么理解需求、拼进 gate 的需求清单、拼进 S4 辩论三方的提示词 <span class="ref">pipeline.py:103</span><span class="ref">content_filter.py:68</span>。</div>`,
+
+PF: `<p class="d-lead">从这里起<b>每个仓库一条独立链路、仓库间全并发</b> <span class="ref">content_filter.py:188</span>。深挖前先走 GitHub API 预抓资料，克隆之前就要，抓完拼成六样资料页 system。<span class="ref">content_filter.py:170</span></p>
+<div class="d-sec-l">并发抓三样</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">README</div><div class="rv">raw 接口拿原文，再清洗截断 <span class="ref">prefetch.py:16</span></div></div>
+<div class="d-row"><div class="rk">两层目录树</div><div class="rv">根目录一层 + 每个一级子目录并发再列一层，拼缩进文本 <span class="ref">prefetch.py:148</span></div></div>
+<div class="d-row"><div class="rk">stars / size</div><div class="rv">size 拼进 system 给模型判体量，防 README 自称轻量误判 <span class="ref">prefetch.py:181</span></div></div>
+</div>
+<h4 class="code">代码约束 · README 清洗</h4>
+<p>按标题整段砍掉 changelog、license、citation、install 这类判方向用不上的噪声段（整词匹配，Newspaper 不触发 News），再剥 HTML、图片、链接 url、代码块，截断到 3500 字。<span class="ref">prefetch.py:37</span><span class="ref">prefetch.py:93</span></p>
+<h4 class="code">代码约束 · 拼 system 用替换不用 format</h4>
+<p>六个占位（全名、简介、topics、README、目录树、体积）逐个字符串替换，不用 str.format，因为 README 正文里的花括号会被 format 当占位符炸掉。size 从 KB 换算成 MB 给模型看。<span class="ref">content_filter.py:25</span></p>
+<div class="d-note">这份资料页 system 是省钱主线的根：同仓库的 gate、explorer、分诊、正反方全部共享<b>逐字节相同</b>的 system 开头，DeepSeek 前缀缓存里 README 那三千多字只真算一次钱。</div>
+<details class="d-exp"><summary>踩坑 · 想给粗筛和深挖分别用 flash / pro，缓存不跨模型</summary><div class="exp-in">
+<p>初衷是省钱：粗筛判断简单，用较廉价的 flash；深挖较难，改用 pro，按难度分配算力。实测行不通：同一段 system 前缀先给 flash 预热、再给 pro，pro 的命中 token 为 0。<b>DeepSeek 前缀缓存按模型各自管理，flash 预热的缓存 pro 无法复用。</b></p>
+<p>这样拆分反而更贵：同一份 system 加 README 加目录树，flash 预热一遍、pro 又当 miss 重算一遍，等于同一前缀付两遍费用。于是两阶段合并、统一用 pro 共享同一份 system，深挖第一轮直接命中粗筛预热的缓存，整体比分开更经济。</p>
+</div></details>`,
+
+GATE: `<p class="d-lead">一次<b>不带工具</b>的调用，只看资料页判这个仓库的整体方向要不要深挖，强制 JSON 返回 {"skip", "reason"}。<span class="ref">explorer.py:241</span></p>
+<h4 class="prompt">提示词约束 · 只有方向明显不对才跳</h4>
+<p>某条具体需求在资料里没写到不是跳过的理由，很多功能 README 不写、要读代码才知道。方向沾边只是没确认功能，不跳；拿不准，不跳。<span class="ref">skills/skip_gate.md</span></p>
+<details class="d-exp"><summary>skill 原文关键段</summary><div class="exp-in"><div class="src">整体方向明显不符、这个仓库根本不是用户要的那类东西，就跳过它。
+某条具体需求在上面的信息里没写到，不是跳过的理由。
+方向沾边、只是还没确认具体功能，就不要跳过。拿不准就不要跳过。</div></div></details>
+<h4 class="code">代码约束 · 解析失败默认放行</h4>
+<p>JSON 解析不出或格式不对，默认 skip=False 进深挖。宁可多花一次深挖的钱，也别错跳，<b>错跳不可逆</b>。<span class="ref">explorer.py:265</span></p>
+<div class="d-note">gate user 里的需求清单带着 KU 编好的判定标准一起拼入 <span class="ref">content_filter.py:65</span>；system 就是预抓那份资料页，跟后续调用共享前缀缓存。</div>`,
+
+SKIP: `<p class="d-lead">gate 判 skip 的仓库<b>到此为止</b>：不克隆、不深挖、不辩论，带着那句跳过理由直接出结果。<span class="ref">explorer.py:553</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">reason</div><div class="rv">一句话说清它是什么、为什么方向不符，显示在结果卡片上</div></div>
+<div class="d-row"><div class="rk">去向</div><div class="rv">不淘汰不丢弃，进最终排序时置灰沉底</div></div>
+</div>
+<div class="d-note rust">软跳过的设计立场：gate 只看了 README 级别的资料，它的判断<b>不配拥有淘汰权</b>，只配把明显不符的压到列表底部；用户扫一眼理由，觉得错跳还能自己点开看。</div>`,
+
+CLONE: `<p class="d-lead">gate 放行的仓库<b>浅克隆</b>到本地临时目录，四个只读工具全对这份本地副本操作。<span class="ref">explorer.py:213</span></p>
+<h4 class="code">代码约束 · 三个细节</h4>
+<ul class="d-ul">
+<li><b>depth 1</b> · 只取当前快照不要历史，省时省盘 <span class="ref">explorer.py:230</span></li>
+<li><b>PAT 拼进 URL</b> · 私有库也能拉，还避开匿名限速 <span class="ref">explorer.py:226</span></li>
+<li><b>stdin 显式断开</b> · 防 git 在凭证异常时等终端输入挂死 <span class="ref">explorer.py:228</span></li>
+</ul>
+<div class="d-note">克隆失败不炸流程：清掉残缺目录、这个仓库标 degraded 降级返回 <span class="ref">explorer.py:570</span>。跑完不自动删，留在 CLONE_DIR 给用户接着深入看，下次搜索前统一清 <span class="ref">pipeline.py:84</span>。</div>
+<div class="d-note amber">命中搜索侧记忆的仓库<b>跳过 explorer 循环直接复用存的拆解</b>，但 gate 和克隆照跑：辩论要对本地克隆按需取证、锚点核验也要本地文件 <span class="ref">explorer.py:611</span>。</div>`,
+
+EXP: `<p class="d-lead">全项目最厚的一段。每轮把四个工具摆给模型（tool_choice=auto，调不调它自己定），模型调工具就并发执行、结果灌回历史进下一轮；<b>不调了，这轮回复就是最终拆解</b>。<span class="ref">explorer.py:621</span><span class="ref">explorer.py:108</span></p>
+<details class="d-exp"><summary>设计 · 为什么采用隐式 tool-use 而非显式 ReAct</summary><div class="exp-in">
+<p>ReAct 要求模型在回复中显式写出 <span class="d-k">Thought / Action / Observation</span>，推理体现在输出 token 中。此处不写，模型直接调用工具，推理在前向传播中隐式完成。停止判据只看有无 tool_calls，不依赖 API 的 stop_reason（实测不可靠）。</p>
+<ul class="d-ul">
+<li><b>节省输出 token</b> · Thought 全部计入输出，既计费又增加延迟；隐式推理无输出成本</li>
+<li><b>前缀缓存稳定</b> · 显式 Thought 每轮不同，会污染 assistant 消息、导致下一轮前缀 miss；历史仅保留调用与结果，结构稳定缓存才稳定</li>
+<li><b>避免重复推理</b> · DeepSeek 有内置 thinking token，再加显式 Thought 相当于推理两遍</li>
+</ul>
+<p>显式 ReAct 仅在多步规划复杂时占优，探查判定 keypoint 时每步决策相对独立，无此需要。</p>
+</div></details>
+<div class="d-sec-l">预算与提醒</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">MAX_TOOLS = 20</div><div class="rv">单仓库工具预算，一轮多个调用按序分配额度，超的填占位不真跑 <span class="ref">explorer.py:38</span><span class="ref">explorer.py:680</span></div></div>
+<div class="d-row"><div class="rk">半程提醒</div><div class="rv">预算过半注入一次盘点提醒，从发散转向查漏 <span class="ref">explorer.py:712</span></div></div>
+<div class="d-row"><div class="rk">停滞提醒</div><div class="rv">一轮真执行的结果全是零新信息（判前 40 字命中标记表，防源码撞词），注入一次别再空转 <span class="ref">explorer.py:66</span><span class="ref">explorer.py:704</span></div></div>
+</div>
+<h4 class="prompt">提示词约束 · 探查策略两步走</h4>
+<p>第一步快速定性：glob 捞依赖声明文件看技术栈、看入口文件、README 拿术语当搜索词。第二步摸结构骨架：找装配组件的集中文件 grep 结构性代码行、顺 import 走主线、同类文件读一个代表。每轮调工具前先写清「已弄清什么、还缺什么、这轮查什么」；参数互相独立的调用放同一轮并发。<span class="ref">skills/content_filter.md</span></p>
+<h4 class="code">代码约束 · 收尾 JSON 三级抢救</h4>
+<p>整段解析 → 修格式重试 → 最后一次「按契约提取」抢救。一个仓库探查十几万 token 栽在最后格式上全损太亏，多一次调用能救一个算一个。<span class="ref">explorer.py:170</span></p>
+<div class="d-note">注入历史只往<b>末尾追加、绝不改写</b>，每轮前缀完整命中 DeepSeek 缓存；注入消息（提醒、逼停、修复）中英各一套按语言取 <span class="ref">prompt_text.py</span>。系统提示以「系统提示:」开头，system_header 里已教模型照做不回应 <span class="ref">skills/system_header.md</span>。</div>`,
+
+TL: `<p class="d-lead">四个只读工具的后端，全对本地克隆操作，返回统一截断在 4 万字内防单次返回塞爆上下文。<span class="ref">agent_tools.py:24</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">list_tree</div><div class="rv">列一层目录，目录排前带文件大小，.git 不给模型看，超 300 条截断 <span class="ref">agent_tools.py:65</span></div></div>
+<div class="d-row"><div class="rk">read_file</div><div class="rv">带行号分段读，offset/limit 配合读中段，行号从 offset+1 起跟编辑器一致 <span class="ref">agent_tools.py:100</span></div></div>
+<div class="d-row"><div class="rk">grep_code</div><div class="rv">ripgrep 子进程正则搜，files / content / count 三种输出模式，context 带上下文行 <span class="ref">agent_tools.py:161</span></div></div>
+<div class="d-row"><div class="rk">glob_files</div><div class="rv">按文件名 pattern 跨树捞文件，比一层层翻快 <span class="ref">agent_tools.py:232</span></div></div>
+</div>
+<h4 class="code">代码约束 · 处处兜底</h4>
+<ul class="d-ul">
+<li><b>路径越界</b> · 所有相对路径过 _safe_join，挡 ../ 逃出克隆目录 <span class="ref">agent_tools.py:39</span></li>
+<li><b>已读去重</b> · 同一段 live 状态再读挡回「已读过」；被清理归档的放行重读、至多 2 次防拉锯死循环 <span class="ref">agent_tools.py:122</span><span class="ref">agent_tools.py:36</span></li>
+<li><b>guard 拦截</b> · README 和根目录树 system 里已给，再要直接回提示不真跑，省工具次数 <span class="ref">tool_loop.py:95</span></li>
+<li><b>执行兜错</b> · 参数 JSON 坏、工具名不存在、执行报错都兜成文字回给模型，循环不断 <span class="ref">tool_loop.py:61</span></li>
+<li><b>stdin 断开</b> · rg 见管道 stdin 会改读 stdin 不搜目录，Jupyter 内核正是不关的管道，不断开永久挂死 <span class="ref">agent_tools.py:209</span></li>
+</ul>`,
+
+CLN: `<p class="d-lead">长链路防上下文膨胀：每轮末尾量一次历史里 system 之外积了多少 token，<b>到 20K 才动手</b>，把较早的读文件返回正文换成占位符。纯代码不调模型。<span class="ref">explorer.py:401</span><span class="ref">explorer.py:43</span></p>
+<h4 class="code">代码约束 · 阶梯式清理</h4>
+<p>先留最近 5 个读文件返回、清更早的，量剩余够不够压进 12K 目标；不够就留 4 个再清再量，一路减到 1 个；只剩最近 1 个还超，把它正文截断到刚好压进目标、尾部标已截断可重读。清理总能把上下文压回目标以内，<b>只保命、绝不叫停探查</b>。<span class="ref">explorer.py:435</span><span class="ref">explorer.py:446</span></p>
+<div class="d-note">占位符带「这段原来是哪个文件哪几行」，模型日后要回看能精准重新定位；清一段就在已读缓存里标归档，这段从「读过就挡」变成「可重读（至多 2 次）」，跟工具那头的重读规矩咬合 <span class="ref">explorer.py:371</span><span class="ref">agent_tools.py:418</span>。</div>
+<div class="d-note amber">每次清理往监控记一笔归档状态快照（清了谁、几段活着几段归档、各重读几次），多仓库并行时按仓库分开看 <span class="ref">explorer.py:457</span>。</div>`,
+
+STOP: `<p class="d-lead">无人值守批量跑，没有人在旁边打断，这两道物理兜底不能少。触发任意一道，追加逼停消息、切成不带工具的强制 JSON 模式让模型直接交卷。<span class="ref">explorer.py:625</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">预算耗尽</div><div class="rv">二十次工具用满，下一轮轮首逼停</div></div>
+<div class="d-row"><div class="rk">重复调用熔断</div><div class="rv">调用规约成指纹（工具名+原始参数串），同一指纹连撞 3 次判死循环 <span class="ref">explorer.py:79</span><span class="ref">explorer.py:663</span></div></div>
+</div>
+<h4 class="code">代码约束 · 熔断不误伤</h4>
+<p>不同参数就清零重记，正常的连读不同文件不受影响；被清理归档过的段的重读是系统逼出来的合理重读，指纹跟原读一样但<b>不算进死循环</b>，重读上限那关自会拦。<span class="ref">explorer.py:93</span></p>
+<div class="d-note rust">逼停后出的 JSON 跟正常收尾走同一条路：三级解析抢救、锚点审计全都照过，质量关不因逼停而放水。</div>`,
+
+AUD: `<p class="d-lead">拆解里每个 where 锚点（路径:符号，逗号可多个）由<b>代码对克隆核验</b>：路径查存在，带符号且是文件就读出来确认符号真在里面。<span class="ref">audit.py:13</span></p>
+<div class="d-sec-l">审计闸的三步</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">1 · 第一次对不上</div><div class="rv">坏锚点拼成重修指令打回，进修复轮重查 <span class="ref">audit.py:62</span></div></div>
+<div class="d-row"><div class="rk">2 · 修复轮</div><div class="rv">独立解锁 3 次工具专供重查锚点，不吃探查那 20 次预算 <span class="ref">explorer.py:55</span><span class="ref">explorer.py:269</span></div></div>
+<div class="d-row"><div class="rk">3 · 仍对不上</div><div class="rv">按设计点名删掉，兜底不给用户看错锚点 <span class="ref">audit.py:77</span></div></div>
+</div>
+<h4 class="code">代码约束 · 两个关键取舍</h4>
+<p>独立修复额度的由来：探查阶段常把预算烧光，审计打回的重修又得带工具重查，没这笔额度重修只能直接删点。真实轨迹里十个仓库四个因预算耗尽丢设计点（MetaGPT 一口气删三个），这笔额度就是救这个。修复轮的结果<b>就地再审计、不回主循环顶</b>，回顶会撞上预算耗尽的逼停把重查结果覆盖掉。<span class="ref">explorer.py:732</span></p>
+<div class="d-note">辩论方论据的锚点走同一套核验：核不上的置空并标 unverified，裁决时只当说法、不当事实 <span class="ref">audit.py:94</span>。</div>`,
+
+DIS: `<p class="d-lead">探查的最终产出：一份<b>不含任何 keypoint 的客观架构拆解</b>，四个字段——purpose 目的、tech_stack 技术栈、key_designs 带锚点的关键设计、architecture 数字分段的架构总览。<span class="ref">skills/content_filter.md</span></p>
+<h4 class="prompt">提示词约束 · 自然语言字段禁代码符号</h4>
+<p>给用户看的字段里严禁出现类名、函数名、变量名这类要读过源码才懂的符号，改用面向使用者的自然表述；领域技术名词（LangGraph、YOLO、SQLite）不在此限。<b>代码符号只允许出现在 where 字段里</b>，且 skill 里明说 where 会被程序逐个核对、瞎编会被打回。</p>
+<details class="d-exp"><summary>合格样例（TradingAgents 的一条 key_design）</summary><div class="exp-in"><div class="src">{"name": "记忆与反思",
+ "detail": "每次决策都记进一个决策日志，事后按这笔交易的真实收益做反思、把经验写回记忆，供之后的决策检索参考。",
+ "where": "tradingagents/agents/utils/memory.py:TradingMemoryLog, tradingagents/graph/reflection.py:Reflector"}</div></div></details>
+<div class="d-note">拆解一职多用：拼进 system 尾部给 S4 分诊和正反方共享（一份拆解全仓库只 miss 一次缓存）<span class="ref">explorer.py:777</span>；按语言分格存进搜索侧记忆，同语言下次搜索直接复用。JSON 彻底解析不出时标 degraded，判定全补 unknown、结构照样完整 <span class="ref">explorer.py:759</span>。</div>`,
+
+FAN: `<p class="d-lead">拆解出来后，每条 keypoint 判它到底命没命中。<b>翻源码的活不交给辩论方</b>（由代码按需去做），辩论方不带工具、只管判断。每条 keypoint 一条独立链路：分诊 → 按需取证 → 正反并行 → 锚点核验 → 立刻单条裁决。<span class="ref">explorer.py:783</span></p>
+<h4 class="code">代码约束 · 缓存焐热的并发编排</h4>
+<p>拆解拼进 system 尾部成 system_debate，分诊、正、反三方共享这个前缀 <span class="ref">explorer.py:777</span>。<b>先跑第一条 keypoint 焐热这段新前缀，再并发其余</b>：全并发的话所有 keypoint 抢着写同一段新前缀，缓存还没建好就都 miss，拆解白算 n 遍。<span class="ref">explorer.py:843</span></p>
+<div class="d-note">gate 和 explorer 焐热的是前半段原 system；拆解那段每仓库首次 debate 调用 miss 一次、之后全命中。一次裁决只看一条 keypoint，上下文干净不串条；keypoint 由代码绑定回结果，对齐结构上有保证。</div>`,
+
+TRI: `<p class="d-lead">一次<b>中立</b>的调用，不站正反任何一方。给它拆解和一条 keypoint，它只回答两件事：手上的拆解够不够判这条，不够要看哪几个文件或符号。<span class="ref">debate.py:159</span></p>
+<h4 class="prompt">提示词约束 · 判够不够的尺子</h4>
+<ul class="d-ul">
+<li>key_designs 里有直接对应的设计、带 where 锚点、说清了做没做，<b>够</b></li>
+<li>体量热度类需求，看 system 里的体积和 star 数字就能判，<b>够</b></li>
+<li>问的能力拆解没提、只含糊带过、没落到具体文件，<b>不够</b></li>
+<li>拿不准算不够：取证只是让程序抠几段源码、代价很小，去核实比凭空判稳 <span class="ref">skills/triage.md</span></li>
+</ul>
+<h4 class="code">代码约束 · 模型的话只当参考</h4>
+<p>need 清单每项固定 path + symbol 两个字段、最多 6 项，path 优先照已核验过的 where 锚点填。解析不出或结构不对一律当「够判」退回，格式问题不卡链路；模型说的 sufficient 只作参考，<b>真正要不要取证由清单里兑现了的那几段决定</b>。<span class="ref">debate.py:198</span></p>`,
+
+EVD: `<p class="d-lead">纯代码的活，<b>不花一次模型调用</b>。要看哪个文件哪个符号全是分诊清单定的，这步只照着清单去克隆里抠源码，自己不判断该看什么。<span class="ref">evidence.py:65</span></p>
+<div class="d-sec-l">兜底关卡</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">路径核验</div><div class="rv">必须在仓库内、真实存在、指向文件；越界编造的直接丢 <span class="ref">evidence.py:92</span></div></div>
+<div class="d-row"><div class="rk">符号定位</div><div class="rv">截符号第一次出现行的上下各 60 行；搜不到作废；没给符号取文件头 <span class="ref">evidence.py:27</span></div></div>
+<div class="d-row"><div class="rk">限量</div><div class="rv">单段 6000 字、总量 30000 字、最多认 6 项，防一条需求把源码整本搬进来 <span class="ref">evidence.py:15</span></div></div>
+</div>
+<div class="d-note">抠的是一个符号周围的<b>一小段</b>，不是整份文件，命中几千行的大文件也只取那一小块。清单被关卡砍光就退回「只用拆解判」，不让任何一步卡死整条链。</div>`,
+
+DEB: `<p class="d-lead">正反两方拿到<b>同一份材料</b>（拆解在 system、按需抠的源码在 user）并行各表一次态，输出都是一句话证据加 where 锚点。<span class="ref">explorer.py:810</span><span class="ref">debate.py:57</span></p>
+<h4 class="prompt">提示词约束 · 正方 advocate</h4>
+<p>为「满足该需求」找最强支持：锚点已核验过是最直接证据；定性类需求引 README、purpose 原话、where 留空；体量热度直接引数字；<b>找不到就如实写没找到，严禁硬凑</b>；复合需求（「适合简历的中小型项目」）任一意思缺证，整条按没找到。<span class="ref">skills/advocate.md</span></p>
+<h4 class="prompt">提示词约束 · 反方 skeptic</h4>
+<p>逐个类型排查反证：空壳实现、只有示例没有实现、依赖声明了但没用、数字冲突、拆解与源码对不上、定性定位不符。拆解可能有错漏，它的说法不能直接当真；找不到反证也如实写，<b>严禁为反而反</b>。<span class="ref">skills/skeptic.md</span></p>
+<h4 class="code">代码约束 · 锚点核验与格式兜底</h4>
+<p>双方的 where 由代码逐条核验，核不上置空标 unverified，裁决时只当说法不当事实 <span class="ref">audit.py:94</span>。强制 JSON 坏了修格式重试一次 <span class="ref">debate.py:108</span>；日志攒进 sink 统一分块输出，防正反并行时交叉 <span class="ref">debate.py:114</span>。</p>`,
+
+ADJ: `<p class="d-lead">一个上下文干净的裁决者收口，一次只裁一条 keypoint，权衡双方过完锚点审计的论据判 hit / miss。<span class="ref">skills/adjudicate.md</span></p>
+<h4 class="prompt">提示词约束 · 判断闸口就一条</h4>
+<p>需求问「这项目是什么」（定性类）就认 README、topics、purpose 里一致的定位，<b>不卡 where</b>；问「里面有没有某实现」（实现类）就必须有带核验过 where 的源码事实，README 一句话是说法不是事实。两头都不过界。</p>
+<div class="d-sec-l">按两方关系分三种情况</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">结论一致</div><div class="rv">按正面事实判，有就 hit 没有就 miss，不管正方说得多好听</div></div>
+<div class="d-row"><div class="rk">各执一词</div><div class="rv">看谁的事实更直接命中需求本义，结合 keypoint 的确切要求裁</div></div>
+<div class="d-row"><div class="rk">部分满足</div><div class="rv">满足的那部分够不够称得上成立，只沾边就 miss</div></div>
+</div>
+<div class="d-note">裁决的 {keypoint} 填纯原文<b>不拼判定标准</b>：裁决只权衡双方已在标准下取的证据 <span class="ref">debate.py:96</span>。evidence 必须点明采信哪方、另一方为什么不推翻。</div>`,
+
+SCR: `<p class="d-lead">模型给的判定<b>不直接信</b>，按位置对齐回发出的清单：第 i 条判定对应第 i 条需求，keypoint 字段一律用我们发出的原文，模型写的不看。<span class="ref">scoring.py:12</span></p>
+<h4 class="code">代码约束 · 为什么不靠文本匹配</h4>
+<p>靠模型照抄原文来匹配的话，它只要改写措辞、翻译、或把编译进 prompt 的判定标准一起抄进 keypoint 字段，文本就对不上、整条判定丢失全补 miss。按位置绑定，发出的清单有序、代码按下标取值，结构上有保证。跟辩论 worker 按派发顺序绑定 case 是同一套思路。</p>
+<ul class="d-ul">
+<li><b>漏判补 miss</b> · 输出条数少缺的补 miss，多判的忽略，每条发出的需求都有结果 <span class="ref">scoring.py:20</span></li>
+<li><b>状态只认两态</b> · hit / miss 之外（含空）一律按 miss 算 <span class="ref">scoring.py:9</span></li>
+<li><b>数命中不算分</b> · 只数 hit 展示「命中数/总数」，不算加权分、不设及格线 <span class="ref">scoring.py:54</span></li>
+</ul>`,
+
+RES: `<p class="d-lead">最终排序：keypoint 命中数<b>降序</b>，平手比 stars，gate 跳过的和降级的沉到最底，没有淘汰环节。<span class="ref">scoring.py:67</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">detail</div><div class="rv">每条 keypoint 带裁决 status/evidence，外加正反两方论据，前端展开两说和理由都能看 <span class="ref">explorer.py:860</span></div></div>
+<div class="d-row"><div class="rk">trace</div><div class="rv">每仓库的探查日志挂回它自己的结果，历史里各存各的 <span class="ref">pipeline.py:151</span></div></div>
+<div class="d-row"><div class="rk">tokens / hit_rate</div><div class="rv">本仓库 token 总量和缓存命中率，加 cost 事件按阶段汇总 <span class="ref">pipeline.py:157</span></div></div>
+</div>
+<div class="d-note">跑完 yield content_done 给前端渲染结果卡，随后 save_run 落库。</div>`,
+
+RUNS: `<p class="d-lead">搜索账本：一次搜索占一行，存关键词、语言、每仓库轻量增量（判定、trace、token）和花费。<span class="d-k">save_run</span> 是<b>唯一写入口</b>：先插 run 行拿 run_id，再回调仓库账本 upsert，保证时间线指得回真实的一次搜索。<span class="ref">runs.py:61</span></p>
+<h4 class="code">代码约束 · 拆解不重复抄</h4>
+<p>results 落库前把每个仓库那份又大又重的拆解摘掉，只留 full_name 指向仓库账本 <span class="ref">runs.py:52</span>；回放时 get_run 按那次搜索的语言把拆解 JOIN 回来拼成完整结果，仓库被删了那格给空、标「拆解已删除」不报错 <span class="ref">runs.py:136</span>。</p>
+<div class="d-note">写回<b>不受记忆开关影响</b>（开关只挡读不挡写），存失败只打日志、绝不让已跑出的结果报错 <span class="ref">pipeline.py:169</span>。</div>`,
+
+RM: `<p class="d-lead">仓库账本：一仓库一行、主键 full_name，存跨搜索不变的贵拆解。拆解按语言分<b>中英两格</b>各存一份，互不覆盖；老数据没语言标记一律当中文。<span class="ref">repo_memory.py:40</span><span class="ref">repo_memory.py:19</span></p>
+<div class="d-sec-l">upsert 的四种情况</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">头回见</div><div class="rv">新建一行，拆解存进当前语言那格</div></div>
+<div class="d-row"><div class="rk">这门语言已存过</div><div class="rv">那格不动，只往 seen_runs 时间线追一笔</div></div>
+<div class="d-row"><div class="rk">还没这门语言</div><div class="rv">这次拆了就补上那格、清 skip_note，别的语言格原样保留</div></div>
+<div class="d-row"><div class="rk">这次没拆成</div><div class="rv">跳过或降级不写拆解；新仓库占一行只记 skip_note <span class="ref">repo_memory.py:181</span></div></div>
+</div>
+<h4 class="code">代码约束 · 复用只认当前语言</h4>
+<p>load_memories 只返回有当前语言那格拆解的仓库，命中才跳过 explorer 直接复用；只有别的语言那格当没命中、照常重新深挖出这门语言的版本，结果页语言不混。<span class="ref">repo_memory.py:92</span><span class="ref">content_filter.py:143</span></p>
+<div class="d-note">seen_runs 每条记 {run_id, 时间, 那次 keypoints, 命中几条}，是这仓库被历次搜索搜到的审计时间线 <span class="ref">repo_memory.py:166</span>；description 取 purpose 前 150 字、tags 抄 key_designs 的名字，供对话侧召回清单用 <span class="ref">repo_memory.py:249</span>。</div>`,
+
+CHAT: `<p class="d-lead">对话主循环 <span class="d-k">stream_chat</span>，一轮走五步：答前试压缩 → 拼 system（内含召回）→ 吐 prompt 事件给监控 → 流式调 DeepSeek 逐字上屏 → 聊完起两个后台任务。吐的是中性事件（prompt / delta / done / error），跟传输格式无关，webapp 再包成 SSE。<span class="ref">session.py:40</span></p>
+<div class="d-sec-l">几个关键动作</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">recall 转正</div><div class="rv">召回命中的仓库多吐一个事件，前端右栏补常驻「召回」芯片，追问不再依赖挑选器 <span class="ref">session.py:72</span></div></div>
+<div class="d-row"><div class="rk">reactive 硬截</div><div class="rv">估算压过了服务端仍报「太长」，命中关键词就再砍一刀历史重试一次 <span class="ref">session.py:22</span><span class="ref">session.py:82</span></div></div>
+<div class="d-row"><div class="rk">压缩后收尾</div><div class="rv">吐 compacted 事件替换前端旧历史，提取和笔记两个游标按新长度重置 <span class="ref">session.py:108</span></div></div>
+<div class="d-row"><div class="rk">payload 清洗</div><div class="rv">下划线开头的监控字段（_compact_summary）剥掉不进请求体 <span class="ref">session.py:31</span></div></div>
+</div>
+<h4 class="prompt">提示词约束 · 人设与边界纪律</h4>
+<p>对话和搜索完全解耦，<b>助手不能发起搜索</b>：没分析过的仓库直接回「去搜索页跑一次」，不编内容不假装分析过。索引只是一句摘要、正文没补进来别硬编细节；带「N 天前」的是当时的观察别当实时状态；候选清单分不清就反问。<span class="ref">skills/llm_skill.md</span></p>`,
+
+CPT: `<p class="d-lead">答前的压缩判断 <span class="d-k">maybe_compact</span>：对话历史（不含 system）估到 <b>40K token</b> 才动手，没到线原样放行。压缩就是把旧消息换成一条包着笔记或摘要的说明消息，最近消息原样保留。<span class="ref">compact.py:127</span><span class="ref">compact.py:21</span></p>
+<div class="d-sec-l">三级路径</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">1 · 笔记顶替</div><div class="rv">零模型成本，过四道检查：笔记非空、游标在范围、保留段非空、压完低于触发线 <span class="ref">compact.py:89</span></div></div>
+<div class="d-row"><div class="rk">2 · 现写摘要</div><div class="rv">笔记不可用才现调一次模型总结整段历史 <span class="ref">compact.py:153</span></div></div>
+<div class="d-row"><div class="rk">3 · 硬截保命</div><div class="rv">摘要也失败就砍最老几轮；连续失败 2 次熔断，之后不再烧钱试、直接硬截 <span class="ref">compact.py:29</span><span class="ref">compact.py:140</span></div></div>
+</div>
+<h4 class="code">代码约束 · 保留段的三个数字</h4>
+<p>保留段下限 4000 token 且至少 4 条（差哪个就往前多留一条）、上限 16000 封顶，最后对齐到 user 消息开头，防切在 assistant 中间像自说自话。<span class="ref">compact.py:61</span><span class="ref">compact.py:50</span></p>
+<div class="d-note">说明消息的话术明确要求「直接接着聊、别复述、别跟用户确认这份笔记」，让对话像没断过 <span class="ref">compact.py:35</span>。量尺是 DeepSeek 真实分词器：项目自带词表开箱即用，丢了从 HF 现下，再不行退回字符估算（中文一字一 token 往大估），量尺绝不卡死压缩 <span class="ref">tokens.py:27</span>。</div>`,
+
+CTX: `<p class="d-lead">拼给模型的 system 不揉成一坨，拆成带标签的段：人设永远头一段，然后是长期记忆索引、每个注入仓库、召回补入的段。分段结构随 prompt 事件给前端，点头像按板块分色看这轮喂了什么。<span class="ref">context.py:277</span></p>
+<div class="d-rows">
+<div class="d-row"><div class="rk">记忆索引</div><div class="rv">三类通用记忆每条压成「[类型] 名字（N 天前）：一句摘要」，正文不进上下文、等召回才补 <span class="ref">context.py:85</span></div></div>
+<div class="d-row"><div class="rk">仓库块</div><div class="rv">拆解（按当前语言取格）+ 聊过的 repo 类事实 + 被搜到的记录，没实质内容不注入 <span class="ref">context.py:96</span></div></div>
+<div class="d-row"><div class="rk">召回段</div><div class="rv">命中仓库标 recalled 加「N 天前分析的快照」提醒；记忆正文、会话笔记、歧义候选各成一段 <span class="ref">context.py:195</span></div></div>
+</div>
+<h4 class="code">代码约束 · 时间一律「N 天前」</h4>
+<p>模型不擅长日期算术，看见「2026-05-12」不会起疑，看见「56 天前」才会想到可能过时，所有时间戳换算成相对天数再进上下文。<span class="ref">context.py:69</span></p>
+<div class="d-note">末尾挂一个 recall_debug 段带完整召回判断（清单、模型原始返回、三档挑了谁），它的 kind 不在拼接白名单里、<b>不发给模型</b>，只随 prompt 事件给前端和 dev 监控 <span class="ref">context.py:184</span>。</div>`,
+
+RCL: `<p class="d-lead">每轮拼 system 前先用小模型跑一次挑选。<span class="d-k">select_from_manifest</span> 是通用原语：只认 {name, description} 清单，不认条目是仓库、记忆还是会话笔记，拿回名字后由调用方分派。<span class="ref">recall.py:78</span></p>
+<div class="d-sec-l">清单与门槛</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">跳过门</div><div class="rv">最后一条 user 消息不足 4 字、或整句是应答词（嗯 / 好的 / ok），不调模型 <span class="ref">recall.py:15</span></div></div>
+<div class="d-row"><div class="rk">输入窗口</div><div class="rv">只看最近 3 条消息，接住「再展开讲讲」这类靠上下文的追问 <span class="ref">recall.py:25</span></div></div>
+<div class="d-row"><div class="rk">清单构成</div><div class="rv">有拆解未注入的仓库 + 三类通用记忆 + 有笔记的过往会话（排除当前会话），混在一份里 <span class="ref">context.py:149</span></div></div>
+</div>
+<h4 class="prompt">提示词约束 · 挑选纪律</h4>
+<p>靠描述的意思对、不靠名字字面像；只挑清楚有用的，拿不准不挑，<b>三档全空是常态不是失败</b>；几个都沾边分不清放 ambiguous 交给反问；只准输出清单里真有的名字。<span class="ref">skills/recall_memories.md</span></p>
+<h4 class="code">代码约束 · 结果核验</h4>
+<p>拿回的名字对清单核一遍、编造的丢掉，picks 截 5 条封顶；调用或解析失败一律当空结果，<b>召回是锦上添花、绝不因它出错弄坏对话</b>。<span class="ref">recall.py:122</span></p>
+<div class="d-note">命中后三档分派：仓库补全量拆解并转正成常驻芯片、记忆补正文进「召回的记忆」段、歧义拼候选清单让助手反问 <span class="ref">context.py:221</span>。每次判断记进 dev 监控。</div>`,
+
+EXT: `<p class="d-lead">聊完在后台把对话里「值得长期记住、又没法从项目现状推导」的东西提炼落库。触发：游标后新消息攒够 <b>12 条</b>（6 轮），或用户说了「记住 / 记一下 / 别忘」这类词立即提取。<span class="ref">extractor.py:25</span><span class="ref">extractor.py:85</span></p>
+<div class="d-sec-l">一次提取的顺序</div>
+<div class="d-rows">
+<div class="d-row"><div class="rk">1 · 增量取料</div><div class="rv">读游标只取新消息，拼上已有记忆清单发模型防重复 <span class="ref">extractor.py:93</span></div></div>
+<div class="d-row"><div class="rk">2 · 校验</div><div class="rv">repo 类的 full_name 对仓库账本核真假、编的丢；每条正文过密钥扫描打码 <span class="ref">extractor.py:109</span><span class="ref">secret_scan.py:12</span></div></div>
+<div class="d-row"><div class="rk">3 · 落库挪游标</div><div class="rv">apply_actions 按动作落库（add / update / delete），整段成功才挪游标，失败下次重提不漏 <span class="ref">chat_memories.py:92</span><span class="ref">extractor.py:124</span></div></div>
+</div>
+<h4 class="code">代码约束 · 单飞加补跑</h4>
+<p>同一时刻只让一个提取在跑：跑着时新触发不插队，压进 pending 覆盖旧的，跑完补一次处理最后那段。既不撞车也不漏。<span class="ref">extractor.py:148</span></p>
+<div class="d-note">产出四类 user / feedback / project / repo。存储跨 session：记忆按 name 全局唯一去重，session_id 只当审计标签；三类通用每次对话全量进索引，repo 类跟对应仓库的拆解一起注入。提取失败只打日志，绝不影响对话 <span class="ref">extractor.py:139</span>。</div>`,
+
+NOTE: `<p class="d-lead">笔记层是压缩的<b>平时准备</b>：每聊完一轮后台检查，游标后新消息估够 <b>1500 token</b> 才触发，把旧笔记和新消息一起喂给模型<b>重写整份笔记</b>（不是往后接字），连同游标和一句简介成对落库。<span class="ref">note.py:22</span><span class="ref">note.py:135</span></p>
+<h4 class="code">代码约束 · 按 token 触发不按条数</h4>
+<p>短闲聊攒不到线就不为几句「嗯」烧一次调用；单轮贴了大段代码几条就过线立刻触发，两头都不浪费。<span class="ref">note.py:20</span></p>
+<ul class="d-ul">
+<li><b>三样配套落库</b> · 正文、简介、游标一起写，压缩时读到的永远配套 <span class="ref">note.py:103</span></li>
+<li><b>简介喂给召回</b> · brief 让 S4 的挑选器判断「哪次旧对话跟当前问题相关」，命中就把笔记正文补进上下文 <span class="ref">note.py:69</span></li>
+<li><b>单飞加补跑</b> · 同一套规矩：同时只跑一个，失败游标不动、下次从老位置重来 <span class="ref">note.py:198</span></li>
+</ul>
+<div class="d-note">笔记三列（note / note_cursor / note_brief）加在 chat_sessions 表上，server 启动时补列 <span class="ref">note.py:31</span>。攒好的笔记放在库里，压缩触发时直接捡现成的，这就是「笔记顶替」那条零成本路径的来源。</div>`,
+};
+
+const drawer = document.getElementById('drawer');
+function clearSelected() {
+  document.querySelectorAll('.card.selected').forEach(c => c.classList.remove('selected'));
+}
+function openDrawer(id) {
+  const n = byId[id]; if (!n) return;
+  const col = SRC[n.src];
+  const b = document.getElementById('d-badge');
+  b.textContent = SRCNAME[n.src];
+  b.style.background = hexA(col, 0.16); b.style.color = col;
+  document.getElementById('d-title').textContent = n.title;
+  document.getElementById('d-sub').textContent = n.sub;
+  document.getElementById('d-body').innerHTML = BODIES[id]
+    || `<div class="ph"><b>${n.title}</b> · ${n.sub}<br>地基占位节点，详情正文在后续内容块里填入。</div>`;
+  document.getElementById('d-body').scrollTop = 0;
+  clearSelected();
+  if (n._el) n._el.classList.add('selected');
+  drawer.classList.add('open');
+}
+function closeDrawer() { drawer.classList.remove('open'); clearSelected(); }
+
+document.getElementById('d-close').onclick = closeDrawer;
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+/* 抽屉拖拽调宽：按住左边缘把手左右拖，宽度受 CSS 的 min/max 夹住 */
+(function () {
+  const grip = document.getElementById('drawer-resize');
+  let dragging = false;
+  grip.addEventListener('pointerdown', e => {
+    dragging = true;
+    grip.classList.add('dragging');
+    drawer.classList.add('resizing');   // 拖动时关掉过渡，跟手不飘
+    grip.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+  grip.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    // 抽屉贴右边，宽度就是「视口右缘减鼠标 x」，CSS 的 min/max 会自动夹住
+    drawer.style.width = (innerWidth - e.clientX) + 'px';
+  });
+  grip.addEventListener('pointerup', e => {
+    dragging = false;
+    grip.classList.remove('dragging');
+    drawer.classList.remove('resizing');
+    grip.releasePointerCapture(e.pointerId);
+  });
+})();
+</script>
+</body>
+</html>

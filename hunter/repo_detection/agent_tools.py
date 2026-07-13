@@ -1,9 +1,13 @@
 """Content Filter用的四个只读工具及其底层。
 
-对外是四个工具，都对克隆到本地的仓库目录操作：`list_tree` 列单层目录、`read_file`
-读文件带行号和已读缓存、`grep_code` 用 ripgrep 做正则搜索、`glob_files` 按文件名
-pattern 跨树找文件。`TOOL_SCHEMAS` 是发给模型的工具定义常量，
-`make_dispatch` 把四个工具绑定到克隆目录、返回引擎按名字调用的调度表。
+对外是四个工具，都对克隆到本地的仓库目录操作：
+- `list_tree` 列单层目录、
+- `read_file` 读文件带行号和已读缓存
+- `grep_code` 用 ripgrep 做正则搜索
+- `glob_files` 按文件名 pattern 跨树找文件。
+
+`TOOL_SCHEMAS` 是发给模型的工具定义常量，`make_dispatch` 把四个工具绑定到克隆目录、返回引擎按名字调用的调度表。
+
 预抓资料（README、两层目录树、meta）另在 prefetch 模块，走 GitHub API、克隆之前跑。
 """
 

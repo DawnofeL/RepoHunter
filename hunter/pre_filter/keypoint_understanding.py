@@ -13,7 +13,7 @@ from hunter.cost import track, TokenMeter
 
 
 async def _compile_one(skill_md: str, keypoint: str, meter: TokenMeter) -> str:
-    """对一条 keypoint 发一次请求，拿回一句 standard；调用出错就返回空串。
+    """对一条 keypoint 发一次请求，拿回一句重写后的 standard；调用出错就返回空串。
 
     Args:
         skill_md: keypoint_understanding.md 内容，作为 system prompt。

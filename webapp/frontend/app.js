@@ -107,6 +107,8 @@
       "form.keypoints.sub": "一条一个",
       "form.addkp": "+ 添加需求",
       "form.kprow.ph": "例如 必须是多 agent",
+      "form.kprow.ph2": "例如 有垂直领域应用（比如生物、化学、统计学等）",
+      "form.kprow.ph3": "例如 不要几百 MB 的大项目，且要能本地跑起来",
       "form.kprow.del": "移除",
       "form.kp.tip": "每条只写一个需求，分开写筛选更准。例如：",
       "form.kp.ex": "LLM RL（纯文本 LLM）\n自带数据集\n本地可跑的中小型项目，不要大型企业级\n有完整的 eval 流程",
@@ -362,6 +364,8 @@
       "form.keypoints.sub": "one per line",
       "form.addkp": "+ Add requirement",
       "form.kprow.ph": "e.g. must be multi-agent",
+      "form.kprow.ph2": "e.g. has a domain-specific application (biology, chemistry, statistics, etc.)",
+      "form.kprow.ph3": "e.g. no huge multi-hundred-MB projects, must run locally",
       "form.kprow.del": "Remove",
       "form.kp.tip": "Write one requirement per line; separating them filters more accurately. e.g.:",
       "form.kp.ex": "LLM RL (text-only LLM)\nships with its own dataset\nsmall-to-mid project that runs locally, not enterprise-scale\nhas a complete eval pipeline",
@@ -813,11 +817,12 @@
   const kpList = $("kp-list");
   const addKpBtn = $("btn-add-kp");
 
-  function addKpRow(value) {
+  function addKpRow(value, phKey) {
+    phKey = phKey || "form.kprow.ph";
     const row = document.createElement("div");
     row.className = "kp-row";
     row.innerHTML =
-      '<input type="text" class="inp kp-inp" spellcheck="false" data-i18n-ph="form.kprow.ph" placeholder="' + esc(t("form.kprow.ph")) + '">' +
+      '<input type="text" class="inp kp-inp" spellcheck="false" data-i18n-ph="' + phKey + '" placeholder="' + esc(t(phKey)) + '">' +
       '<button class="kp-del" data-i18n-title="form.kprow.del" title="' + esc(t("form.kprow.del")) + '">×</button>';
     row.querySelector(".kp-inp").value = value || "";
     row.querySelector(".kp-del").addEventListener("click", () => {
@@ -828,7 +833,9 @@
     kpList.appendChild(row);
   }
   addKpBtn.addEventListener("click", () => addKpRow());
-  addKpRow(); addKpRow(); addKpRow();
+  addKpRow(undefined, "form.kprow.ph");
+  addKpRow(undefined, "form.kprow.ph2");
+  addKpRow(undefined, "form.kprow.ph3");
 
   // 把 i18n 的提示和例子填进「i」浮窗，语言切换时重填
   function fillKpTip() {
@@ -855,7 +862,7 @@
       keypoints: keypoints,
       languages: languages,
       output_language: lang === "en" ? "English" : "简体中文",
-      top_k: parseInt($("in-topk").value, 10) || 12,
+      top_k: parseInt($("in-topk").value, 10) || 20,
       use_memory: $("in-usemem").checked,
     };
   }

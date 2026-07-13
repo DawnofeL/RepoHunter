@@ -53,7 +53,7 @@ class RunRequest(BaseModel):
     keypoints: list[str] = []
     languages: list[str] = []
     output_language: str = "简体中文"
-    top_k: int = 30
+    top_k: int = 20
     # 记忆开关，默认开：命中记忆就复用拆解跳过 explorer；关了就全部照常拆
     use_memory: bool = True
 

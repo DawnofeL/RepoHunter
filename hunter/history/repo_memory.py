@@ -1,14 +1,10 @@
-"""repo_memory 表：跨搜索不变的仓库知识，一仓库一行（仓库账本）。
+"""管仓库账本（`repo_memory` 表）：一个仓库占一行，存那些不随每次搜索变的仓库知识（仓库账本）。
 
-搜索侧两条线：搜完把这批仓库 upsert 进来（upsert_repos，由 runs 的 save_run 编排调），
-下次搜到同名的直接读现成拆解跳过 explorer（load_memories）。seen_runs 记这仓库被哪几次搜到过
-的一句话摘要（run_id、时间、那次 keypoints、那次命中几条），点开仓库审计时列成时间线，要看
-某次完整轨迹再去 runs 表取。搜索账本 runs 里每个仓库只写 full_name 指向这里，不重复抄拆解。
-连库走 hunter.history.history_db 的共享 _connect，连的是 history.db。
-
-拆解按语言分开存：一仓库还是一行，但 dissection 列存的是「语言 -> 拆解」的小包，中文搜存中文那格、
-英文搜存英文那格。取拆解按当前语言取对应那格，没有那格就当没存过、重新深挖。老数据没有语言标记，
-读的时候当中文那格（之前一直中文用，存量就是中文）。
+这里最值钱的是对一个仓库做的分析（代码里叫 `dissection`），也就是又贵又费劲拆出来的那份，全库只在这存一份。
+这份分析还按中文、英文分开各存一份，哪种语言搜的就存哪份、互不覆盖。
+搜索跑完，这批仓库靠 `upsert_repos` 存进来或更新一下（由流水账那边的 `save_run` 调它）；下次搜索开头用 `load_memories` 拿一批仓库名来查，谁有现成分析就直接复用、跳过重新拆源码那步。
+每个仓库还带一条时间线（`seen_runs`），记着它先后被哪几次搜索搜到过，要看某次完整轨迹再去流水账取。
+流水账那边不重抄分析、只记仓库名，翻看旧搜索时用 `get_dissections` 按名字把分析取回去配齐。
 """
 
 import json
@@ -21,10 +17,8 @@ DEFAULT_LANG = "简体中文"
 
 
 def _diss_pack(raw) -> dict:
-    """把 dissection 列的原始值统一成「语言 -> 拆解」的包。
-
-    新格式本来就是 {语言: 拆解}。老格式是单独一份拆解 dict（有 purpose 这类键、没有语言键），
-    读到就裹成 {DEFAULT_LANG: 它}，当中文那格。空的返回空包。
+    """
+    把 dissection 列的原始值统一成「语言 -> 拆解」的包。
     """
     if not raw:
         return {}
@@ -75,8 +69,13 @@ def init_repo_memory() -> None:
 
 
 def _row_to_dict(row: sqlite3.Row, language: str = DEFAULT_LANG) -> dict:
-    # 把一行转成 dict，JSON 列 loads 回对象。dissection 按语言从包里取对应那格（老数据当中文那格），
-    # 取不到就退到包里有哪份用哪份，聊天注入宁可给别的语言也别给空、模型会用当前语言转述
+    """把数据库里查出来的一行仓库记录，整理成方便直接用的字典。
+
+    一个仓库对它的分析（代码里叫 `dissection`、项目里管它叫拆解）在库里按中文、英文各存一份，这里按当前搜索用的语言挑出对应那份拿出来。
+    要是那门语言的还没存过，就退一步、库里有哪份先用哪份，而不是干脆给空。
+    因为聊天时要把它喂给模型，给一份别的语言的也比什么都没有强，模型会自己用当前语言复述。
+    在库里存成一整段文字的那几列（`JSON_COLS` 里列的那几个），这里也顺手还原成能直接读的结构。
+    """
     d = dict(row)
     for col in JSON_COLS:
         raw = d.get(col)
@@ -93,7 +92,7 @@ def _row_to_dict(row: sqlite3.Row, language: str = DEFAULT_LANG) -> dict:
 def load_memories(full_names: list[str], language: str = DEFAULT_LANG) -> dict[str, dict]:
     """给一批 full_name，一次查回来，返回 {full_name: 记忆行}，没记录的不在字典里。
 
-    搜索侧复用用：召回 top30 后拿这些名字来查，命中且有当前语言那格拆解的才算命中、才跳过 explorer；
+    搜索侧复用用：召回 top k 后拿这些名字来查，命中且有当前语言那格拆解的才算命中、才跳过 explorer；
     只有别的语言那格、没有当前语言的，当没命中（下面 content_filter 会照常重新深挖出这门语言的版本）。
     full_names 为空直接返回空字典，不碰数据库。
     """
@@ -147,7 +146,12 @@ def upsert_repos(records: list[dict], run_id: int, run_ts: str, keypoints: list[
 
 
 def _fetch_existing(conn: sqlite3.Connection, full_names: list[str]) -> dict[str, dict]:
-    # 先把这批仓库已有的行捞出来，判断是新建还是更新、有没有拆解，避免逐个单查
+    """要存一批仓库之前，先查一下这批里哪些库里已经有了。
+
+    有了这份「谁已经在、谁还没在」的对照，写回时（`_save_one`）才好判断每个仓库是头一回见要新建，还是早就有了只需更新，以及它之前有没有存过分析。
+    为了快，这批一次查完，不一个一个去问。
+    库里这批一个都没有，就直接返回空的、连数据库都不碰。
+    """
     names = [n for n in full_names if n]
     if not names:
         return {}
@@ -160,7 +164,11 @@ def _fetch_existing(conn: sqlite3.Connection, full_names: list[str]) -> dict[str
 
 
 def _run_entry(rec: dict, run_id: int, run_ts: str, keypoints: list[str]) -> dict:
-    # 拼一条 seen_runs 摘要：那次搜索 id、时间、需求清单、这仓库命中几条
+    """给某个仓库记一小条「它在这次搜索里露过面」的备忘。
+
+    这条备忘写清楚是哪一次搜索、什么时候搜的、当时用户提的是什么需求、这个仓库当时对上了几条。
+    一个仓库会被很多次搜索搜到，这些备忘攒起来就是它的一条时间线（代码里叫 `seen_runs`），翻看时能看出它历来被谁搜到过。
+    """
     return {
         "run_id": run_id,
         "ts": run_ts,
@@ -173,7 +181,14 @@ def _run_entry(rec: dict, run_id: int, run_ts: str, keypoints: list[str]) -> dic
 def _save_one(conn: sqlite3.Connection, rec: dict, run_id: int, run_ts: str,
               keypoints: list[str], now: int, existing: dict[str, dict],
               language: str = DEFAULT_LANG) -> None:
-    # 写回一个仓库，四种情况分开处理，读旧的 seen_runs 接上这次摘要再写回
+    """把一个仓库的这次结果写回账本，按这次有没有真正分析出东西，分四种情形。
+
+    不论哪种，都先给它添上这次搜索的一条备忘（追进 `seen_runs` 时间线）。
+    四种情形是：这个仓库当前语言的分析早存过了，就不动分析、只添备忘；
+    这次新分析出了东西，就把当前语言这份分析补上去（真正写库的活交给 `_upsert_full`）；
+    这次没分析成（被提前筛掉、或中途出错），若是头回见的新仓库就先占个位、只记一句为什么没分析，若是老仓库就只添备忘。
+    没有名字（`full_name`）的记录直接跳过不处理。
+    """
     full_name = rec.get("full_name", "")
     if not full_name:
         return
@@ -224,8 +239,13 @@ def _save_one(conn: sqlite3.Connection, rec: dict, run_id: int, run_ts: str,
 def _upsert_full(conn: sqlite3.Connection, full_name: str, rec: dict, diss: dict,
                  seen: list, now: int, is_new: bool, old_pack: dict | None = None,
                  language: str = DEFAULT_LANG) -> None:
-    # 存完整拆解和元数据：description 取 purpose 截 150 字，tags 抄 key_designs 的 name。
-    # 拆解写进语言包对应那格，别的语言那格从 old_pack 原样保留
+    """把一个仓库完整的分析（`dissection`）和基本信息真正写进库里，库里没有就新建一行、已经有就更新那一行。
+
+    分析在库里按语言分开存，这次写的是当前语言这份，另一门语言原来那份原样留着、不会被盖掉。
+    顺带记下星标数（`stars`）、体积（`size`）这些基本信息，还从分析里摘一句话当简介、把几个关键设计的名字挑出来当标签。
+    """
+
+    # description 取 purpose 截 150 字，tags 抄 key_designs 里各项的 name
     purpose = diss.get("purpose", "") or ""
     description = purpose[:150]
     tags = [d.get("name", "") for d in (diss.get("key_designs") or []) if d.get("name")]
