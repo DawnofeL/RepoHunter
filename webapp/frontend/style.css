@@ -427,10 +427,12 @@ body {
 
 /* ── 结果：排序卡 ──────────────────────────────── */
 .results-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:22px; gap:16px; }
-.results-list { display:flex; flex-direction:column; gap:12px; }
+/* 三处卡片列表共用：结果页、工作台左栏、记忆详情，卡片间留足呼吸感 */
+.results-list, .ws-cards, .vault-detail-diss { display:flex; flex-direction:column; gap:20px; }
+.vault-detail-diss { margin-top:18px; }
 /* flex 子项默认会被压缩，卡片展开后总高度超出 ws-list 时不加这条会被压扁裁掉，
    而不是让 ws-list 溢出滚动；flex-shrink:0 保持卡片原本高度，交给外层滚动 */
-.rcard { flex-shrink:0; border-radius:14px; overflow:hidden; box-shadow:0 4px 18px rgba(28,26,18,0.05);
+.rcard { flex-shrink:0; border-radius:14px; overflow:hidden; box-shadow:0 2px 10px rgba(28,26,18,0.04);
   background:linear-gradient(158deg, rgba(253,251,246,0.9), rgba(242,238,228,0.82));
   border:1px solid rgba(28,26,18,0.08);
   transition:box-shadow 0.3s, transform 0.3s var(--smooth); animation:panelIn 0.5s var(--expo) both; }
@@ -459,8 +461,8 @@ body {
   transform:skewX(-18deg); animation:perfectSheen 5s var(--smooth) infinite;
 }
 @keyframes perfectSheen { 0% { left:-60%; } 24% { left:130%; } 100% { left:130%; } }
-.rcard-head { display:grid; grid-template-columns:auto auto 1fr auto auto; gap:14px; align-items:center;
-  padding:15px 18px; cursor:pointer; }
+.rcard-head { display:grid; grid-template-columns:auto auto 1fr auto auto; gap:12px; align-items:center;
+  padding:12px 16px; cursor:pointer; }
 .rcard-rank { font-family:'JetBrains Mono',monospace; font-size:13px; font-weight:600; color:var(--t3); }
 .rcard-title { font-size:14.5px; font-weight:700; color:var(--t1); word-break:break-all; }
 .rcard-stats { display:flex; gap:14px; align-items:center; font-family:'JetBrains Mono',monospace;
@@ -517,10 +519,15 @@ body {
 .rcard-trace-body { display:none; margin-top:10px; }
 .rcard-trace.open .rcard-trace-body { display:block; }
 
-/* 轨迹代码框：结果卡和记忆库时间线共用的终端风容器，深墨底浅字等宽 */
-.trace-box { max-height:420px; overflow:auto; border-radius:9px; padding:12px 14px;
-  background:var(--dark); font-family:'JetBrains Mono',monospace; font-size:10.5px;
-  line-height:1.6; color:rgba(240,237,229,0.82); }
+/* 轨迹代码框：结果卡和记忆库时间线共用的终端风容器。暖墨渐变底不用纯黑，
+   金线描边 + 内高光压出卡片感，等宽浅字，超高内部滚动 */
+.trace-box { max-height:420px; overflow:auto; border-radius:12px; padding:14px 16px;
+  background:linear-gradient(168deg, #282419, #1C1A12);
+  border:1px solid rgba(216,201,121,0.16);
+  box-shadow:inset 0 1px 0 rgba(244,241,232,0.06), 0 6px 20px -10px rgba(28,26,18,0.55);
+  font-family:'JetBrains Mono',monospace; font-size:10.5px;
+  line-height:1.7; color:rgba(240,237,229,0.82); }
+.trace-box::-webkit-scrollbar-thumb { background:rgba(244,241,232,0.18); }
 .trace-box .log-line { white-space:pre-wrap; word-break:break-word; color:rgba(240,237,229,0.82); }
 .trace-round { white-space:pre-wrap; word-break:break-word; margin-top:14px; padding-top:9px;
   font-weight:600; color:#d8c979; border-top:1px solid rgba(240,237,229,0.14); }
@@ -727,6 +734,12 @@ body {
 .vault-tl-kp { flex:1; font-size:11.5px; color:var(--t1);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .vault-tl-hit { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--moss); flex:none; }
+.vault-tl-row.clickable { cursor:pointer; transition:border-color 0.16s; }
+.vault-tl-row.clickable:hover { border-color:rgba(74,103,65,0.4); }
+.vault-tl-caret { font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--t3); flex:none; }
+/* 轨迹展开区默认收起，靠行上 open 类开合；没这条点开就永远收不回去 */
+.vault-tl-trace { display:none; margin:6px 0 2px; }
+.vault-tl-item.open .vault-tl-trace { display:block; }
 
 /* 左栏：搜索结果 / 会话 */
 .ws-left { display:flex; flex-direction:column; min-width:0;
@@ -889,6 +902,27 @@ body {
 .ws-msg-user:first-child { margin-top:0; }
 /* 回复正文保留模型给的换行，不然多段挤成一坨 */
 .ws-bubble { white-space:pre-wrap; word-break:break-word; }
+/* assistant 气泡的 Markdown 排版：pre-wrap 会把标签间换行放大成空行，渲染模式下关掉 */
+.ws-bubble.md { white-space:normal; }
+.ws-bubble.md > :first-child { margin-top:0; }
+.ws-bubble.md > :last-child { margin-bottom:0; }
+.ws-bubble.md p, .ws-bubble.md ul, .ws-bubble.md ol, .ws-bubble.md table,
+.ws-bubble.md pre, .ws-bubble.md blockquote { margin:8px 0; }
+.ws-bubble.md h1, .ws-bubble.md h2, .ws-bubble.md h3, .ws-bubble.md h4,
+.ws-bubble.md h5, .ws-bubble.md h6 { margin:14px 0 6px; font-size:13.5px; font-weight:700; color:var(--t1); }
+.ws-bubble.md ul, .ws-bubble.md ol { padding-left:20px; }
+.ws-bubble.md li { margin:3px 0; }
+.ws-bubble.md code { font-family:'JetBrains Mono',monospace; font-size:11.5px;
+  background:rgba(28,26,18,0.07); border-radius:4px; padding:1px 5px; }
+.ws-bubble.md pre { background:rgba(28,26,18,0.06); border-radius:8px; padding:10px 12px; overflow-x:auto; }
+.ws-bubble.md pre code { background:none; padding:0; }
+.ws-bubble.md blockquote { border-left:2px solid rgba(28,26,18,0.18); padding:2px 12px; color:var(--t2); }
+.ws-bubble.md table { border-collapse:collapse; display:block; overflow-x:auto; max-width:100%; }
+.ws-bubble.md th, .ws-bubble.md td { border:1px solid rgba(28,26,18,0.12); padding:5px 10px;
+  font-size:12px; text-align:left; }
+.ws-bubble.md th { background:rgba(28,26,18,0.05); font-weight:700; }
+.ws-bubble.md hr { border:none; border-top:1px solid rgba(28,26,18,0.1); margin:12px 0; }
+.ws-bubble.md a { color:var(--moss); }
 /* 流式中在末尾闪一个方块光标，delta 停了（.streaming 摘掉）光标消失 */
 .ws-bubble.streaming::after { content:"▋"; margin-left:2px; color:var(--moss);
   animation:wscursor 1s step-end infinite; }

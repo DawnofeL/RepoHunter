@@ -1034,6 +1034,50 @@
   $("ws-mem-search")?.addEventListener("input", renderWsMemory);
 
   // ── 右栏对话 ──────────────────────────────────
+  // Markdown 渲染只放行这些标签，别的一律拆成纯文本；属性只留 a 的安全链接
+  const MD_OK_TAGS = new Set(["P", "BR", "HR", "STRONG", "B", "EM", "I", "DEL", "CODE", "PRE",
+    "BLOCKQUOTE", "UL", "OL", "LI", "H1", "H2", "H3", "H4", "H5", "H6",
+    "TABLE", "THEAD", "TBODY", "TR", "TH", "TD"]);
+
+  // 清洗渲染出的节点树：白名单外的标签退化成它的文字内容，属性除了 a 的 http(s) 链接全剥掉，
+  // 防模型输出里夹带的原始 HTML/事件属性注入页面
+  function sanitizeMD(root) {
+    Array.from(root.querySelectorAll("*")).forEach((el) => {
+      const isLink = el.tagName === "A";
+      if (!MD_OK_TAGS.has(el.tagName) && !isLink) {
+        el.replaceWith(document.createTextNode(el.textContent || ""));
+        return;
+      }
+      Array.from(el.attributes).forEach((a) => {
+        const keep = isLink && a.name === "href" && /^https?:/i.test(a.value);
+        if (!keep) el.removeAttribute(a.name);
+      });
+      if (isLink) {
+        el.setAttribute("target", "_blank");
+        el.setAttribute("rel", "noopener");
+      }
+    });
+  }
+
+  // 把 assistant 的 Markdown 文本渲染进气泡：先在惰性 template 里解析清洗完再上屏
+  // （template 里的节点不会真加载资源）；库没加载成功就退回纯文本
+  function renderMD(el, text) {
+    if (!window.marked) {
+      el.textContent = text || "";
+      return;
+    }
+    try {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = marked.parse(text || "", { breaks: true, async: false });
+      sanitizeMD(tpl.content);
+      el.classList.add("md");
+      el.innerHTML = "";
+      el.appendChild(tpl.content);
+    } catch (e) {
+      el.textContent = text || "";
+    }
+  }
+
   // 往聊天区加一个气泡，返回气泡里放文本的节点，流式时往它 append 文字。role 决定左右对齐样式
   function appendBubble(role, text) {
     const chat = $("ws-chat");
@@ -1054,7 +1098,9 @@
     }
     const body = document.createElement("div");
     body.className = "ws-bubble";
-    body.textContent = text || "";
+    // assistant 的话按 Markdown 渲染（表格、代码块才成形），用户的话保持纯文本
+    if (role === "assistant") renderMD(body, text || "");
+    else body.textContent = text || "";
     wrap.appendChild(body);
     chat.appendChild(wrap);
     chat.scrollTop = chat.scrollHeight;
@@ -1269,7 +1315,8 @@
             (ev.repos || []).forEach((r) => injectCtx(r, true));
           } else if (ev.type === "delta") {
             acc += ev.text || "";
-            bubble.textContent = acc;
+            // 每来一段就把攒的全文重新渲染一遍 Markdown，表格代码块边生成边成形
+            renderMD(bubble, acc);
             $("ws-chat").scrollTop = $("ws-chat").scrollHeight;
           } else if (ev.type === "done") {
             // 这轮请求 + 这轮回复都写完了，真实占用数字才出来，补进这条气泡挂着的提示词里，
@@ -1280,13 +1327,13 @@
             pendingCompact = ev.messages || null;
           } else if (ev.type === "error") {
             acc += (acc ? "\n\n" : "") + t("err.prefix") + (ev.message || t("err.unknown"));
-            bubble.textContent = acc;
+            renderMD(bubble, acc);
             bubble.classList.add("error");
           }
         }
       }
     } catch (e) {
-      bubble.textContent = (acc ? acc + "\n\n" : "") + t("err.prefix") + String(e);
+      renderMD(bubble, (acc ? acc + "\n\n" : "") + t("err.prefix") + String(e));
       bubble.classList.add("error");
     } finally {
       bubble.classList.remove("streaming");
@@ -1874,10 +1921,12 @@
         sideHTML({ evidence: k.evidence }, "⚖️ " + t("rcard.verdict"), "adj") +
         "</div>"
       ).join("");
-    // 跳过的卡头上挂灰标签，正常卡挂 keypoint 命中徽章
+    // 跳过的卡头上挂灰标签，正常卡挂 keypoint 命中徽章；判决数据缺失（kp_unknown）就不挂，不显示误导的 0/0
     const badge = skipped
       ? '<span class="rcard-skip-tag">' + esc(t("rcard.skipped")) + "</span>"
-      : '<span class="rcard-kp ' + kpCls + '">keypoint ' + r.keypoint_hits + "/" + r.keypoint_total + "</span>";
+      : r.kp_unknown
+        ? ""
+        : '<span class="rcard-kp ' + kpCls + '">keypoint ' + r.keypoint_hits + "/" + r.keypoint_total + "</span>";
 
     // 跳过的卡展开只放 github 链接和跳过原因，正常卡照旧放整份拆解
     const body = skipped
@@ -1903,9 +1952,9 @@
     const traceSec = (r.trace && r.trace.length)
       ? '<div class="rcard-trace"><div class="rcard-trace-head">📜 ' + esc(t("run.trace.head")) +
         ' <span class="rcard-trace-n">' + r.trace.length + " " + esc(t("proc.meta.lines")) + "</span></div>" +
-        '<div class="rcard-trace-body">' +
+        '<div class="rcard-trace-body"><div class="trace-box">' +
         r.trace.map((l) => '<div class="log-line">' + esc(l) + "</div>").join("") +
-        "</div></div>"
+        "</div></div></div>"
       : "";
 
     return (
@@ -2379,7 +2428,9 @@
         box.innerHTML = '<div class="history-empty">' + esc(t("vault.noTrace")) + "</div>";
         return;
       }
-      box.innerHTML = trace.map((l) => '<div class="log-line">' + esc(l) + "</div>").join("");
+      // 套终端风容器：暖墨底等宽字保留空格缩进，超高内部滚动
+      box.innerHTML = '<div class="trace-box">' +
+        trace.map((l) => '<div class="log-line">' + esc(l) + "</div>").join("") + "</div>";
       box.dataset.loaded = "1";
     } catch (e) {
       box.innerHTML = '<div class="history-empty">' + esc(t("vault.runGone")) + "</div>";
@@ -2402,13 +2453,33 @@
     Array.from($("vault-detail").querySelectorAll(".vault-tl-row.clickable")).forEach((row) => {
       row.addEventListener("click", () => vaultToggleSeenTrace(row));
     });
-    // 把记忆行拼成结果卡认识的形状，没拆解的当跳过卡；不带单删按钮（删走大厅卡的 ×）
-    const asRepo = {
-      full_name: m.full_name, dissection: m.dissection || {}, stars: m.stars, size: m.size,
-      read_files: m.read_files || [], skipped: skipped, reason: m.skip_note || "",
-      keypoint_hits: 0, keypoint_total: 0, detail: { keypoints: [] },
+    // 把记忆行拼成结果卡认识的形状，没拆解的当跳过卡；不带单删按钮（删走大厅卡的 ×）。
+    // 判决是按次的、账本行里没存，先拿时间线里最近一次的命中数把徽章填上，逐条判决详情异步补
+    const renderCard = (verdict) => {
+      const asRepo = {
+        full_name: m.full_name, dissection: m.dissection || {}, stars: m.stars, size: m.size,
+        read_files: m.read_files || [], skipped: skipped, reason: m.skip_note || "",
+        keypoint_hits: verdict ? verdict.keypoint_hits || 0 : 0,
+        keypoint_total: verdict ? verdict.keypoint_total || 0 : 0,
+        detail: (verdict && verdict.detail) || { keypoints: [] },
+        kp_unknown: !verdict,
+      };
+      renderRanked($("vault-detail").querySelector(".vault-detail-diss"), [asRepo], null);
     };
-    renderRanked($("vault-detail").querySelector(".vault-detail-diss"), [asRepo], null);
+    // 最近一次真判过的搜索（被 gate 跳过那次 total 是 0，略过往前找），没有就不挂徽章
+    const seen = (m.seen_runs || []).filter((s) => s.run_id != null && (s.total || 0) > 0);
+    const latest = seen.length ? seen[seen.length - 1] : null;
+    renderCard(latest ? { keypoint_hits: latest.hits || 0, keypoint_total: latest.total || 0 } : null);
+    if (!latest) return;
+    // 拉那次搜索的完整记录，把这仓库的逐条判决（裁决理由、正反论据）补进卡片重渲染。
+    // 那次搜索被删了就保持时间线数字的徽章；期间用户切去了别的仓库就不动屏幕
+    fetch("/history/" + latest.run_id)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((run) => {
+        const v = run && (run.ranked || []).find((r) => r.full_name === m.full_name);
+        if (v && vaultRepoEntry === m) renderCard(v);
+      })
+      .catch(() => {});
   }
 
   // 点仓库卡或左栏「查看拆解」跳右栏：拉 /memory/repo 渲染拆解 + seen_runs，再扩宽右栏
