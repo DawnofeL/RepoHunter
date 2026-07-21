@@ -24,7 +24,7 @@
 
 **project**：进行中的事、目标、约束，对话之外查不到的。相对日期一律转成绝对日期存（「周四」转「2026-07-09」）。content 也按三段（事实、为什么、怎么用）。例：用户说「周四之后冻结合并」，存「2026-07-09 起冻结非紧急合并。为什么：要切发布分支。怎么用：这之后安排的 PR 都提醒一下」。
 
-**repo**：关于某个具体 GitHub 仓库的事实，带锚点。只有这一类填 full_name（仓库全名）和 where（路径:符号）。例：存 content「反思用轻量模型对已结算决策生成反思文本，追加进决策日志」，full_name「TauricResearch/TradingAgents」，where「tradingagents/graph/reflection.py:Reflector」。
+**repo**：关于某个具体 GitHub 仓库的事实，带锚点。只有这一类填 full_name（仓库全名）和 where（路径:符号）。例：存 content「反思用轻量模型对已结算决策生成反思文本，追加进决策日志」，full_name「TauricResearch/TradingAgents」，where「tradingagents/graph/reflection.py:Reflector」。对话里助手翻源码查证得出的结论（触发时机、调用关系、某机制的具体实现位置）也算这一类，where 填它查到的文件路径加符号或行号；这些结论查一次花不少工具调用，存下来下次注入同一仓库直接用。
 
 # 什么不该存
 

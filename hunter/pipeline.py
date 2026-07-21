@@ -11,7 +11,7 @@ import io
 import sys
 import traceback
 
-from hunter.config import load_skill, clear_clone_dir
+from hunter.config import load_skill
 from hunter.cost import COST
 from hunter.clients import mcp_session
 from hunter.pre_filter.query_understanding import Query_Understanding
@@ -80,9 +80,7 @@ async def run_pipeline(params: dict):
         # 每次 run 先清掉上一轮的全局 token 累计，否则跨 run 越加越多
         COST.clear()
 
-        # 开新搜索前先清掉上一轮留在 data/tmp 的克隆，本轮的会一直留到下次搜索或关程序
-        clear_clone_dir()
-
+        # 克隆不再每搜必清：按仓库名留在 data/tmp 跨搜索复用，过期的由启动时的 sweep_clones 清
         keypoints     = params.get("keypoints", [])
         languages     = params.get("languages", [])
         output_language = params.get("output_language", "简体中文")

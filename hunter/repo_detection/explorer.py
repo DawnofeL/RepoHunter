@@ -3,15 +3,14 @@ Content Filter 主流程：gate 判方向、explorer 工具循环读源码出拆
 
 explore_one 是入口，先过 gate、再浅克隆、跑工具循环产出客观拆解并过锚点审计自愈，最后把每条
 keypoint 扇给正反辩论加裁决。_call_explore/_call_final 发探查和收尾两种请求，_parse_final
-解析收尾 JSON 带兜底，_call_gate 判要不要深挖，_clone_repo 浅克隆到本地。
+解析收尾 JSON 带兜底，_call_gate 判要不要深挖，克隆走 hunter.clone 的统一入口。
 """
 
 import asyncio
 import json
-import shutil
-import tempfile
 
-from hunter.config import call_deepseek, set_repo_sem, load_skill, MODELS, GITHUB_PAT, CLONE_DIR
+from hunter.config import call_deepseek, set_repo_sem, load_skill, MODELS
+from hunter.clone import ensure_clone
 from hunter.cost import track, TokenMeter
 from hunter.repo_detection.agent_tools import (
     tool_schemas as _tool_schemas, make_dispatch, archive_segment, is_archived_read, MAX_LINES,
@@ -208,34 +207,6 @@ async def _parse_final(messages: list, raw: str, meter: TokenMeter, model: str |
     ]
     resp = await _call_final(rescue, meter, model)
     return _try_json(resp.choices[0].message.content or "")
-
-
-async def _clone_repo(full_name: str) -> str | None:
-    """
-    把仓库浅克隆到一个临时目录，返回目录路径，克隆失败返回 None。
-
-    GITHUB_PAT 拼进 URL，私有库也能拉、还避开匿名限速。--depth 1 只取当前快照不要历史，
-    省时省盘。克隆落在项目内的 CLONE_DIR 下，跑完不自动删，留着给用户审查，由 clear_clone_dir 统一清。
-
-    Args:
-        full_name: owner/repo。
-    Returns:
-        克隆根目录的绝对路径；克隆失败返回 None（残缺目录已清掉）。
-    """
-    tmp = tempfile.mkdtemp(prefix="repohunter_", dir=CLONE_DIR)
-    url = (f"https://{GITHUB_PAT}@github.com/{full_name}.git" if GITHUB_PAT
-           else f"https://github.com/{full_name}.git")
-    # stdin 显式断开，防 git 在凭证异常时等终端输入挂死
-    proc = await asyncio.create_subprocess_exec(
-        "git", "clone", "--depth", "1", url, tmp,
-        stdin=asyncio.subprocess.DEVNULL,
-        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    _, err = await proc.communicate()
-    if proc.returncode != 0:
-        shutil.rmtree(tmp, ignore_errors=True)
-        print(f"[{full_name}] 🔴 克隆失败：{err.decode('utf-8', 'replace').strip()[:200]}")
-        return None
-    return tmp
 
 
 async def _call_gate(system: str, gate_user: str, meter: TokenMeter, model: str | None = None) -> dict:
@@ -566,8 +537,9 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
 
     _status(emit_log, full_name, "▶ 开始探查", log)
 
-    # gate 判要深挖，把仓库浅克隆到临时目录，四个工具都对这份本地副本操作；克隆失败就降级返回
-    local_root = await _clone_repo(full_name)
+    # gate 判要深挖，从统一入口拿本地克隆（一天内搜过或聊过的直接复用，没有才现场浅克隆），
+    # 四个工具都对这份本地副本操作；克隆失败就降级返回
+    local_root = await ensure_clone(full_name)
     if local_root is None:
         detail = reconcile({}, keypoints)
         scores = score_one(detail)
@@ -580,7 +552,7 @@ async def explore_one(full_name: str, system: str, gate_user: str, user: str,
                 "skipped": False, "reason": "", "degraded": True}
 
     # make_dispatch 把克隆目录和已读缓存绑进四个工具，guard 拦掉重复读 README 和根目录
-    # 克隆跑完不删，留在 CLONE_DIR 给用户接着深入看，由 clear_clone_dir 统一清
+    # 克隆跑完不删，按仓库名留在 data/tmp 跨搜索复用，启动时 sweep_clones 按最后使用时间清过期
     dispatch = _guard_dispatch(make_dispatch(local_root, read_cache, output_language), read_cache, output_language)
 
     # 对话起点：system 含项目六样资料，user 是Content Filter指令，后续每轮往这个列表末尾追加

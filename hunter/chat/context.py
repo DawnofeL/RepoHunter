@@ -40,6 +40,7 @@ _TEXT_ZH = {
     "injected_header": "# 当前注入的仓库",
     "lbl_persona": "人设", "lbl_memory": "记忆索引", "lbl_recall_mem": "召回的记忆",
     "lbl_recall_note": "召回的会话笔记", "lbl_hint": "候选仓库", "lbl_recall_debug": "召回判断",
+    "lbl_tools": "工具纪律",
 }
 _TEXT_EN = {
     "unknown_time": "unknown time", "today": "today", "yesterday": "yesterday", "days_ago": "{d} days ago",
@@ -58,6 +59,7 @@ _TEXT_EN = {
     "injected_header": "# Currently injected repos",
     "lbl_persona": "Persona", "lbl_memory": "Memory index", "lbl_recall_mem": "Recalled memories",
     "lbl_recall_note": "Recalled session notes", "lbl_hint": "Candidate repos", "lbl_recall_debug": "Recall decision",
+    "lbl_tools": "Tool discipline",
 }
 
 
@@ -307,6 +309,9 @@ async def build_segments(context: list[str], messages: list[dict] | None = None,
             segs.append({"label": fn, "kind": "repo", "text": block})
     if messages and model:
         segs += await _recall_segments(generals, injected, messages, model, session_id, t, output_language)
+    # 有仓库段（注入或召回补入）就附一段工具纪律，session 那边同步给模型挂只读工具
+    if any(s["kind"] == "repo" for s in segs):
+        segs.append({"label": t["lbl_tools"], "kind": "tools", "text": load_skill("llm_tools")})
     return segs
 
 
@@ -319,6 +324,8 @@ def segments_to_system(segments: list[dict], output_language: str = "简体中�
     recall_mems = [s["text"] for s in segments if s["kind"] == "recall_memory"]
     recall_notes = [s["text"] for s in segments if s["kind"] == "recall_note"]
     hints = [s["text"] for s in segments if s["kind"] == "recall_hint"]
+    tools_blk = next((s["text"] for s in segments if s["kind"] == "tools"), "")
+    tool_hist = next((s["text"] for s in segments if s["kind"] == "tool_history"), "")
     system = persona
     if memory_blk:
         system += "\n\n" + memory_blk
@@ -328,6 +335,10 @@ def segments_to_system(segments: list[dict], output_language: str = "简体中�
         system += "\n\n" + "\n\n".join(recall_mems)
     if recall_notes:
         system += "\n\n" + "\n\n".join(recall_notes)
+    if tool_hist:
+        system += "\n\n" + tool_hist
     if hints:
         system += "\n\n" + "\n\n".join(hints)
+    if tools_blk:
+        system += "\n\n" + tools_blk
     return system

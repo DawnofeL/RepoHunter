@@ -259,6 +259,8 @@
       "compact.reactive_truncate": "模型拒绝后硬截",
       "ws.inject.tip": "注入对话",
       "ws.avatar.tip": "查看这轮发给模型的提示词",
+      "ws.tools.head.pre": "查证代码 ",
+      "ws.tools.head.post": " 步",
       "ws.input.ph": "给 AI 发消息…",
       "ws.send": "发",
       "hud.workbench": "🔬 工作台",
@@ -516,6 +518,8 @@
       "compact.reactive_truncate": "hard truncate after model refusal",
       "ws.inject.tip": "Inject into chat",
       "ws.avatar.tip": "View the prompt sent to the model this turn",
+      "ws.tools.head.pre": "Code lookups: ",
+      "ws.tools.head.post": " steps",
       "ws.input.ph": "Message the AI…",
       "ws.send": "Send",
       "hud.workbench": "🔬 Workbench",
@@ -1101,10 +1105,46 @@
     // assistant 的话按 Markdown 渲染（表格、代码块才成形），用户的话保持纯文本
     if (role === "assistant") renderMD(body, text || "");
     else body.textContent = text || "";
-    wrap.appendChild(body);
+    // assistant 气泡外面套一层竖排容器，工具活动条要插在气泡上方（flex 横排里直接插会挤到旁边）
+    if (role === "assistant") {
+      const col = document.createElement("div");
+      col.className = "ws-col";
+      col.appendChild(body);
+      wrap.appendChild(col);
+    } else {
+      wrap.appendChild(body);
+    }
     chat.appendChild(wrap);
     chat.scrollTop = chat.scrollHeight;
     return body;
+  }
+
+  // ── 工具活动条 ────────────────────────────────
+  // 助手翻代码时挂在气泡上方的一条小面板：流式时逐行冒「读 xxx」活动，答完折叠成一行可点开
+  function buildToolPanel(bubble) {
+    const box = document.createElement("div");
+    box.className = "ws-toolact";
+    const head = document.createElement("div");
+    head.className = "ws-toolact-head";
+    const lines = document.createElement("div");
+    lines.className = "ws-toolact-lines";
+    box.appendChild(head);
+    box.appendChild(lines);
+    head.addEventListener("click", () => box.classList.toggle("folded"));
+    bubble.parentElement.insertBefore(box, bubble);
+    return { box: box, head: head, lines: lines };
+  }
+
+  function addToolLine(panel, text) {
+    const l = document.createElement("div");
+    l.className = "ws-toolact-line";
+    l.textContent = text;
+    panel.lines.appendChild(l);
+  }
+
+  function finishToolPanel(panel, n) {
+    panel.head.textContent = t("ws.tools.head.pre") + n + t("ws.tools.head.post");
+    panel.box.classList.add("done", "folded");
   }
 
   // 召回判断可视化：点头像时插在 user 消息之后，展示这轮小模型看了用户的话从候选里挑了什么。
@@ -1187,7 +1227,8 @@
         ? '<div class="pi-compacted">' + esc(t("pi.compacted").replace("{path}", pathName)) + "</div>"
         : "";
       const kindCls = { persona: "pi-persona", memory: "pi-memory", repo: "pi-repo",
-        recall_memory: "pi-recall", recall_hint: "pi-recall" };
+        recall_memory: "pi-recall", recall_hint: "pi-recall",
+        tools: "pi-memory", tool_history: "pi-memory" };
       const allSegs = ev.segments || [];
       // 召回判断段单独拎出来，不当普通提示词段渲染，末尾插在 user 消息之后
       const recallDbg = allSegs.find((s) => s.kind === "recall_debug");
@@ -1265,11 +1306,14 @@
     $("ws-send").disabled = true;
     const bubble = appendBubble("assistant", "");
     bubble.classList.add("streaming");
-    // 这轮 AI 气泡的外层，收到 prompt 事件就把提示词挂它身上，点头像时读
-    const bubbleWrap = bubble.parentElement;
+    // 这轮 AI 气泡的最外层消息节点（气泡外还套了一层竖排容器），收到 prompt 事件就把提示词挂它身上，点头像时读
+    const bubbleWrap = bubble.closest(".ws-msg");
     let acc = "";
     // 后端这轮若压缩了历史，会 yield compacted 事件带来压缩后的数组，先存这，finally 里替换
     let pendingCompact = null;
+    // 这轮的工具活动：面板首个 tool 事件时建，行文本攒进数组随会话存
+    let toolPanel = null;
+    const toolLines = [];
 
     try {
       const res = await fetch("/chat", {
@@ -1313,6 +1357,12 @@
           } else if (ev.type === "recall") {
             // 召回帮着捞进来的仓库，转正成右栏芯片，往后每轮常驻（跟点过「+」一样，用户可随手删）
             (ev.repos || []).forEach((r) => injectCtx(r, true));
+          } else if (ev.type === "tool") {
+            // 助手正在翻代码：活动行实时冒进气泡上方的工具面板
+            if (!toolPanel) toolPanel = buildToolPanel(bubble);
+            addToolLine(toolPanel, ev.text || "");
+            toolLines.push(ev.text || "");
+            $("ws-chat").scrollTop = $("ws-chat").scrollHeight;
           } else if (ev.type === "delta") {
             acc += ev.text || "";
             // 每来一段就把攒的全文重新渲染一遍 Markdown，表格代码块边生成边成形
@@ -1337,6 +1387,8 @@
       bubble.classList.add("error");
     } finally {
       bubble.classList.remove("streaming");
+      // 工具面板收尾：折叠成「查证代码 N 步」一行，点开还能看明细
+      if (toolPanel) finishToolPanel(toolPanel, toolLines.length);
       // 空回复（比如一上来就报错）不入历史，免得脏了后续多轮。把这轮的提示词分段挂在 assistant
       // 这条上一起存进会话，退出重进点头像还能看（含召回判断）；发给模型时上面会剥掉、只发 role/content
       if (acc) {
@@ -1348,7 +1400,9 @@
           compacted: p.compacted, compact_path: p.compact_path,
           context_tokens: p.context_tokens, context_threshold: p.context_threshold,
         } : null;
-        wsMessages.push({ role: "assistant", content: acc, prompt });
+        // 工具活动行也随消息存，重开会话还能看到这轮查过哪些代码
+        wsMessages.push({ role: "assistant", content: acc, prompt,
+                          tools: toolLines.length ? toolLines.slice() : undefined });
       }
       wsSending = false;
       $("ws-send").disabled = false;
@@ -1400,9 +1454,17 @@
     chat.innerHTML = wsMessages.length ? "" : wsChatEmptyHTML();
     wsMessages.forEach((m) => {
       const body = appendBubble(m.role, m.content);
-      // 还原 assistant 气泡时把存下的提示词分段挂回头像，点开还能看这轮发了什么（含召回判断）
-      if (m.role === "assistant" && m.prompt && body.parentElement) {
-        body.parentElement._prompt = m.prompt;
+      // 还原 assistant 气泡时把存下的提示词分段挂回头像，点开还能看这轮发了什么（含召回判断）。
+      // 注意 assistant 气泡外面套了一层竖排容器，挂提示词要找到最外层的消息节点
+      if (m.role === "assistant" && m.prompt) {
+        const wrap = body.closest(".ws-msg");
+        if (wrap) wrap._prompt = m.prompt;
+      }
+      // 这轮存过工具活动就重建折叠好的面板，点开能看当时查了哪些代码
+      if (m.role === "assistant" && m.tools && m.tools.length) {
+        const p = buildToolPanel(body);
+        m.tools.forEach((l) => addToolLine(p, l));
+        finishToolPanel(p, m.tools.length);
       }
     });
     chat.scrollTop = chat.scrollHeight;

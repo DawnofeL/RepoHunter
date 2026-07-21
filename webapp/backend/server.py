@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from hunter import config
+from hunter import clone
 from hunter import memory
 from hunter import history
 from hunter import dev
@@ -21,11 +22,12 @@ from webapp.backend.events import sse_event
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 启动清一次：上次没开新搜索就关了程序，遗留的克隆这里兜底清掉
-    config.clear_clone_dir()
+    # 启动时清扫过期克隆：超过一天没用过的删掉，一天内的留着给搜索和对话复用。
+    # 关闭时不清，克隆本来就要跨次保留，靠每次启动的清扫控制磁盘
+    removed = clone.sweep_clones()
+    if removed:
+        print(f"启动清扫：删掉 {removed} 个过期克隆")
     yield
-    # 优雅关闭再清一次：Ctrl+C 走 uvicorn 优雅关闭会触发这里；kill -9 拦不住，靠下次启动兜底
-    config.clear_clone_dir()
 
 
 app = FastAPI(title="RepoHunter", lifespan=lifespan)

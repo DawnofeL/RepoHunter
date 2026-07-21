@@ -902,6 +902,20 @@ body {
 .ws-msg-user:first-child { margin-top:0; }
 /* 回复正文保留模型给的换行，不然多段挤成一坨 */
 .ws-bubble { white-space:pre-wrap; word-break:break-word; }
+/* assistant 气泡外的竖排容器：工具活动条在上、气泡在下 */
+.ws-col { flex:1; min-width:0; display:flex; flex-direction:column; gap:7px; }
+/* 工具活动条：助手翻代码的过程面板，等宽小字配暖色侧线，答完折叠成一行 */
+.ws-toolact { border-left:2px solid rgba(184,130,10,0.4); background:rgba(184,130,10,0.06);
+  border-radius:0 8px 8px 0; padding:6px 11px; }
+.ws-toolact-head { display:none; font-family:'JetBrains Mono',monospace; font-size:10px;
+  color:var(--amber); cursor:pointer; user-select:none; }
+.ws-toolact.done .ws-toolact-head { display:block; }
+.ws-toolact.done .ws-toolact-head::before { content:"+ "; }
+.ws-toolact.done:not(.folded) .ws-toolact-head::before { content:"\2212 "; }
+.ws-toolact.folded .ws-toolact-lines { display:none; }
+.ws-toolact-line { font-family:'JetBrains Mono',monospace; font-size:10px; line-height:1.8;
+  color:var(--t2); animation:langIn 0.3s ease both; }
+.ws-toolact.done .ws-toolact-lines { margin-top:4px; }
 /* assistant 气泡的 Markdown 排版：pre-wrap 会把标签间换行放大成空行，渲染模式下关掉 */
 .ws-bubble.md { white-space:normal; }
 .ws-bubble.md > :first-child { margin-top:0; }

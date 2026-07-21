@@ -163,8 +163,8 @@ CLONE_DIR.mkdir(parents=True, exist_ok=True)
 def clear_clone_dir() -> None:
     """清空 CLONE_DIR 下的所有克隆，目录本身留着。
 
-    C 端每次开搜前、启动时、优雅关闭时各清一次；notebook 想清就手动调。克隆跑完不再自动删，
-    留着给用户接着深入看，直到下一次清理。
+    日常生命周期归 hunter/clone.py 管（按仓库名保留、启动时清过期），这里只留给
+    notebook 或想立刻腾磁盘时手动全清用。
     """
     CLONE_DIR.mkdir(parents=True, exist_ok=True)
     for entry in CLONE_DIR.iterdir():

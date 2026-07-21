@@ -12,6 +12,8 @@ import traceback
 
 from hunter.config import call_deepseek, MODELS
 from hunter.chat.context import build_segments, segments_to_system
+from hunter.chat.tools import get_toolbox, MAX_TOOL_CALLS
+from hunter import dev
 from hunter.memory import (
     spawn_extraction, spawn_note, maybe_compact, reset_cursors_after_compact, force_truncate,
     estimate_tokens, COMPACT_THRESHOLD,
@@ -43,6 +45,9 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
 
     一开始先传一个「prompt」事件，把这轮发给模型看的完整提示词（人设、注入的仓库分析、对话历史等拼起来的那一整份，按板块拆开）和这轮的消息一起带上，方便前端做"提示词监控"、点开看这轮到底给模型看了什么。
     接下来模型每吐一小段新文字，就传一个「delta」事件（也就是模块开头说的"增量"）。
+    有注入仓库时模型挂着四个只读工具，它可以先读几段源码再作答：每执行一次工具就传一个
+    「tool」事件带一句活动文案（如「读 xxx.py」），工具结果灌回历史再来一轮，直到它不再调
+    工具，那轮的文字就是最终回答。每轮对话的工具次数有上限，到上限强制作答。
     这轮正常聊完，传一个「done」事件；中途出错，传一个「error」事件。
 
     Args:
@@ -51,7 +56,7 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
         session_id: 这次会话的编号。这轮聊完会靠它判断该不该在后台把这轮里的重点记下来；传空字符串就只负责回答，不做这个记录动作。这次对话本身存不存、什么时候存，跟这个函数无关，是前端收完这轮回复之后自己另外发一个请求去存的。
         output_language: 界面选的语言（简体中文或英文），决定助手用哪种语言回答，也决定提示词里各种说明文字、以及后台生成的摘要、笔记、记忆用哪种语言写。
     Yields:
-        一连串小事件包裹，种类有四种：prompt（这轮完整提示词）、delta（新蹦出来的一小段文字）、done（这轮说完了）、error（出错了）。
+        一连串小事件包裹：prompt（这轮完整提示词）、tool（正在执行的工具活动）、delta（新蹦出来的一小段文字）、done（这轮说完了）、error（出错了）。
     """
     try:
 
@@ -61,6 +66,19 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
 
         # 拼这轮的 system 提示词、拆成人设和召回记忆等好几个板块，召回要看最近几条消息才能判断用户提到了哪个仓库或记忆
         segments = await build_segments(context, work_msgs, MODELS["recall"], session_id, output_language)
+
+        # 有仓库段（注入或召回补入）就取工具箱，挂四个只读工具让模型能翻这些仓库的真源码；
+        # 同一会话跨轮共用一个工具箱，已读缓存和工具日志都在里面；没有仓库就不挂工具
+        tool_repos = [s["label"] for s in segments if s.get("kind") == "repo"]
+        toolbox = get_toolbox(session_id, tool_repos, output_language) if tool_repos else None
+
+        # 之前几轮查过的代码拼成一段注入 system：结果还在的模型直接引用不重查，超预算被降级
+        # 的只留一行指针、需要时限次重读取回。要插在拼 system 和吐 prompt 事件之前，监控才看得到
+        if toolbox is not None:
+            hist = toolbox.context_block()
+            if hist:
+                segments.append({"label": toolbox.history_label(), "kind": "tool_history", "text": hist})
+
         system = segments_to_system(segments, output_language)
 
         # 把这轮完整提示词（system 各板块加实际发送的消息）吐给前端做监控，真实占了多少 token 要等模型回完才算得出来、留到下面 done 事件里补
@@ -75,8 +93,14 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
 
         # 清理一遍要发的消息（剥掉内部专用字段），跟 system 拼成最终发给模型的完整请求体
         payload = _clean_payload(system, work_msgs)
+
+        async def _open_stream(with_tools: bool):
+            """按要不要挂工具发一次流式请求，工具由模型自己决定调不调。"""
+            kwargs = {"tools": toolbox.schemas(), "tool_choice": "auto"} if with_tools else {}
+            return await call_deepseek(model=MODELS["chat"], messages=payload, stream=True, **kwargs)
+
         try:
-            stream = await call_deepseek(model=MODELS["chat"], messages=payload, stream=True)
+            stream = await _open_stream(toolbox is not None)
         except Exception as e:
 
             # 上面已经按估算压过一次历史，但估算终究是估的，服务端仍可能嫌太长报错，命中"太长"关键词就再砍一刀历史重试
@@ -85,22 +109,67 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
             work_msgs = force_truncate(work_msgs, session_id)
             did_compact = True
             payload = _clean_payload(system, work_msgs)
-            stream = await call_deepseek(model=MODELS["chat"], messages=payload, stream=True)
+            stream = await _open_stream(toolbox is not None)
 
-        # 攒着流式收到的每一小段文字，等模型说完了拼回完整的一整段回复
+        # 小循环：模型要调工具就执行完灌回历史再来一轮，不调了这轮的文字就是最终回答。
+        # reply_parts 跨轮攒所有吐给用户的文字，used 计已用的工具次数，到上限下一轮不再挂工具逼它作答
         reply_parts = []
-        async for chunk in stream:
+        used = 0
+        while True:
 
-            # chunk 是 openai 库的流式返回结构（DeepSeek 走这套兼容协议），choices[0].delta.content 是这一小块新增的文字、没有新文字时是 None 要跳过
-            if chunk.choices:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    reply_parts.append(delta)
-                    yield {"type": "delta", "text": delta}
+            # 流式收这一轮：文字增量直接推给前端，工具调用的增量按 index 攒起来等收完拼整
+            round_parts = []
+            calls: dict = {}
+            async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    round_parts.append(delta.content)
+                    reply_parts.append(delta.content)
+                    yield {"type": "delta", "text": delta.content}
+                # 工具调用是流式分片来的：名字先到、参数串一段段续，按 index 归并到同一个调用上
+                for tc in (delta.tool_calls or []):
+                    cur = calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                    if tc.id:
+                        cur["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        cur["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        cur["args"] += tc.function.arguments
+
+            # 这一轮没有工具调用，刚收的文字就是最终回答，跳出循环走收尾
+            if not calls:
+                break
+
+            # 模型的工具调用请求原样进历史（格式必须合法，下一轮请求才认），然后逐个执行
+            ordered = [calls[i] for i in sorted(calls)]
+            payload.append({"role": "assistant", "content": "".join(round_parts),
+                            "tool_calls": [{"id": c["id"], "type": "function",
+                                            "function": {"name": c["name"], "arguments": c["args"]}}
+                                           for c in ordered]})
+            for c in ordered:
+
+                # 目标仓库本地还没克隆会现场浅克隆（要几秒），先吐一条活动提示别让用户干等
+                repo_to_clone = toolbox.needs_clone(c["args"])
+                if repo_to_clone:
+                    yield {"type": "tool", "text": toolbox.describe_clone(repo_to_clone)}
+                yield {"type": "tool", "text": toolbox.describe(c["name"], c["args"])}
+                result = await toolbox.exec(c["name"], c["args"])
+                payload.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+                used += 1
+
+            # 次数没用完继续挂工具，用完了这一轮不挂，模型只能基于已有材料作答
+            stream = await _open_stream(used < MAX_TOOL_CALLS)
 
         # 把收到的所有增量拼回完整回复，跟这轮发送的消息拼在一起，构成这轮聊完之后的完整历史
         reply = "".join(reply_parts)
         final_msgs = work_msgs + ([{"role": "assistant", "content": reply}] if reply else [])
+
+        # 这轮工具用了几次、日志攒了多少条、拼段时降级了几条，记进 dev 监控供审计视图看
+        if session_id and toolbox is not None and used:
+            dev.record(session_id, "tools", {"calls": used, "log_entries": len(toolbox.log),
+                                             "archived": toolbox.last_archived})
 
         # 这轮的请求和回复都写完了占用条的真实 token 数才算得出来，随 done 事件一并给前端，提前算会比实际占用小一截
         yield {"type": "done", "context_tokens": estimate_tokens(final_msgs)}
