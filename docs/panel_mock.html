@@ -1,0 +1,297 @@
+<style>
+  /* ─── 配色 token：暖奶白玻璃底 + 森林绿骨 + lime 火花 + 琥珀暖 ─── */
+  :root {
+    --paper-1: #E9E4D8;
+    --paper-2: #EFEBE1;
+    --ink:     #26332A;   /* 深森林近黑，主文字 */
+    --ink-2:   #5E6357;   /* 暖灰次级 */
+    --ink-3:   #8A8C7E;   /* 更淡的提示 */
+    --pine:    #3C5043;   /* 结构绿，标签 */
+    --moss:    #93A26A;   /* 中绿，低饱和 */
+    --lime:    #B6C849;   /* 火花，只用于交互/激活 */
+    --amber:   #C4864F;   /* 暖琥珀 */
+    --clay:    #C99A72;
+    --glass:        rgba(250, 247, 240, 0.62);
+    --glass-strong: rgba(252, 250, 244, 0.78);
+    --glass-brd:    rgba(255, 255, 255, 0.60);
+    --glass-brd-2:  rgba(38, 51, 42, 0.08);
+    --hair:         rgba(38, 51, 42, 0.10);
+    --sheen:        rgba(255, 255, 255, 0.55);
+    --shadow:       28px 40px 80px -30px rgba(40, 52, 38, 0.45);
+    --field-a: rgba(147, 162, 106, 0.55);
+    --field-b: rgba(196, 134, 79, 0.40);
+    --field-c: rgba(182, 200, 73, 0.30);
+    --bg: radial-gradient(120% 90% at 12% 8%, #EEEAE0 0%, #E7E2D6 55%, #E1DBCE 100%);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: "Söhne", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+      "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
+    overflow-x: hidden;
+  }
+  /* 活的暖色雾场，让玻璃浮起来 */
+  .field { position: fixed; inset: -20%; z-index: 0; filter: blur(70px); opacity: .9; pointer-events: none; }
+  .field span { position: absolute; border-radius: 50%; }
+  .blob-a { width: 46vw; height: 46vw; left: -6vw; top: -4vw; background: var(--field-a); }
+  .blob-b { width: 40vw; height: 40vw; right: -8vw; top: 8vw; background: var(--field-b); }
+  .blob-c { width: 34vw; height: 34vw; left: 30vw; bottom: -12vw; background: var(--field-c); }
+
+  /* 顶端锚定：展开只往下长，面板顶不动，不再因为居中而上顶 */
+  .stage { position: relative; z-index: 1; min-height: 100vh; display: flex;
+    justify-content: center; align-items: flex-start; padding: 52px 20px 40px; }
+
+  /* ─── 面板本体：液态玻璃 ─── */
+  .panel {
+    width: min(720px, 100%);
+    max-height: 86vh;
+    display: flex; flex-direction: column;
+    border-radius: 26px;
+    background: var(--glass);
+    backdrop-filter: blur(34px) saturate(1.35);
+    -webkit-backdrop-filter: blur(34px) saturate(1.35);
+    border: 1px solid var(--glass-brd);
+    box-shadow: var(--shadow), inset 0 1px 0 var(--sheen);
+    overflow: hidden;
+    position: relative;
+    animation: rise .5s cubic-bezier(.2,.7,.2,1) both;
+  }
+  .panel::before { content: ""; position: absolute; inset: 0; border-radius: 26px; pointer-events: none;
+    background: linear-gradient(180deg, rgba(255,255,255,.18), rgba(255,255,255,0) 22%); }
+  @keyframes rise { from { opacity: 0; transform: translateY(14px) scale(.985); filter: blur(6px); } }
+
+  .head { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    padding: 22px 26px 14px; }
+  .head h1 { margin: 0; font-size: 15.5px; font-weight: 600; letter-spacing: .01em; color: var(--ink); }
+  .head .sub { font-size: 11.5px; color: var(--ink-3); margin-top: 3px; letter-spacing: .02em; }
+  .x { width: 34px; height: 34px; flex: 0 0 auto; border: 0; border-radius: 50%; cursor: pointer;
+    background: transparent; color: var(--ink-2); display: grid; place-items: center; transition: all .22s ease; }
+  .x:hover { background: rgba(196,134,79,.14); color: var(--amber); transform: rotate(90deg); }
+  .x svg { width: 15px; height: 15px; }
+
+  /* 上下文占用条 */
+  .gauge { margin: 0 26px 6px; }
+  .gauge .row { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; color: var(--ink-2);
+    letter-spacing: .02em; margin-bottom: 7px; }
+  .gauge .row b { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .gauge .track { height: 5px; border-radius: 999px; background: var(--glass-brd-2);
+    overflow: hidden; border: 1px solid var(--hair); }
+  .gauge .fill { height: 100%; width: 12%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--moss), var(--lime)); transition: width 1s cubic-bezier(.2,.7,.2,1); }
+
+  /* flex:1 + min-height:0 才让正文在面板内部真正滚动、长出滚动条，不撑破面板 */
+  .body { flex: 1 1 auto; min-height: 0; padding: 12px 20px 22px; overflow-y: auto;
+    display: flex; flex-direction: column; gap: 12px; }
+  .body::-webkit-scrollbar { width: 9px; }
+  .body::-webkit-scrollbar-thumb { background: var(--hair); border-radius: 999px; border: 3px solid transparent; background-clip: content-box; }
+
+  /* ─── 玻璃瓦：一种材质，靠一条侧栏低饱和地标身份 ─── */
+  .tile {
+    position: relative;
+    flex: 0 0 auto;   /* 不许被 flex 压缩：超出面板就滚动，别把别的卡片挤扁 */
+    border-radius: 16px;
+    background: var(--glass-strong);
+    border: 1px solid var(--glass-brd);
+    box-shadow: inset 0 1px 0 var(--sheen), 0 6px 20px -14px rgba(40,52,38,.4);
+    overflow: hidden;
+    transition: border-color .25s ease, transform .25s ease, box-shadow .25s ease;
+  }
+  .tile:hover { border-color: rgba(196,134,79,.30); box-shadow: inset 0 1px 0 var(--sheen), 0 10px 26px -14px rgba(40,52,38,.5); }
+  /* 展开态：玻璃亮一点、边稍暖，当前段有轻微存在感，不靠色条 */
+  .tile.open { border-color: rgba(196,134,79,.26); box-shadow: inset 0 1px 0 var(--sheen), 0 12px 30px -16px rgba(40,52,38,.5); }
+  .tile[data-k="persona"] { --dot: var(--amber); }
+  .tile[data-k="memory"]  { --dot: var(--moss); }
+  .tile[data-k="recall"]  { --dot: var(--pine); }
+  .tile[data-k="user"]    { --dot: var(--ink-3); }
+  .tile[data-k="extract"] { --dot: var(--lime); }
+  .tile[data-k="notes"]   { --dot: var(--moss); }
+  .tile[data-k="compact"] { --dot: var(--clay); }
+
+  .tile-head { display: flex; align-items: center; gap: 11px; padding: 15px 16px 15px 20px; cursor: pointer;
+    user-select: none; }
+  /* 身份只靠这颗小圆点：本色 + 一圈柔光晕，精致不刻意 */
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--dot, var(--moss));
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--dot, var(--moss)) 16%, transparent); }
+  .tile-head .label { font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--pine); }
+  .tile-head .meta { font-size: 11.5px; color: var(--ink-3); font-weight: 500; letter-spacing: .01em;
+    font-variant-numeric: tabular-nums; }
+  .spacer { flex: 1; }
+
+  /* chevron：细描边尖角，圆形热区，悬停浮暖光，展开旋 180° */
+  .chev { width: 28px; height: 28px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center;
+    color: var(--ink-2); transition: background .22s ease, color .22s ease; }
+  .tile-head:hover .chev { background: rgba(196,134,79,.14); color: var(--amber); }
+  .chev svg { width: 13px; height: 13px; transition: transform .32s cubic-bezier(.3,.8,.3,1); }
+  .tile.open .chev svg { transform: rotate(180deg); }
+
+  .tile-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .34s cubic-bezier(.2,.7,.2,1); }
+  .tile.open .tile-body { grid-template-rows: 1fr; }
+  .tile-body > .inner { overflow: hidden; }
+  .tile.open .tile-body > .inner { }
+  .content { padding: 0 18px 16px 20px; font-size: 13.5px; line-height: 1.66; color: var(--ink-2); }
+  .content .lead { color: var(--ink); }
+  .content .mem { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .content .mem .k { color: var(--pine); font-weight: 600; }
+  .content .faint { color: var(--ink-3); font-style: italic; }
+
+  /* 芯片：命中数、状态 */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 2px; }
+  .chip { font-size: 11.5px; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--hair);
+    color: var(--ink-2); background: var(--glass); letter-spacing: .01em; }
+  .chip b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .chip.hit { color: #3f5a3a; border-color: rgba(147,162,106,.5); background: rgba(147,162,106,.14); }
+  .chip.none { color: var(--ink-3); }
+  .chip.spark { color: #5a5f14; border-color: rgba(182,200,73,.55); background: rgba(182,200,73,.18); }
+
+  /* 内凹的代码/提示词子面板：微内凹玻璃，发丝分隔，不套框中框 */
+  .code { margin-top: 10px; border-radius: 12px; border: 1px solid var(--hair);
+    background: rgba(38,51,42,.045); overflow: hidden; }
+  .code .seg { padding: 11px 13px; }
+  .code .seg + .seg { border-top: 1px solid var(--hair); }
+  .code .cap { font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-3);
+    margin-bottom: 6px; }
+  .code pre { margin: 0; font-family: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 12px; line-height: 1.6; color: var(--ink); white-space: pre-wrap; word-break: break-word;
+    max-height: 150px; overflow: auto; }
+
+  .body .foot { text-align: center; font-size: 11px; color: var(--ink-3); padding: 4px 0 2px; letter-spacing: .04em; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="field"><span class="blob-a"></span><span class="blob-b"></span><span class="blob-c"></span></div>
+
+<div class="stage">
+  <section class="panel" role="dialog" aria-label="上一轮发给模型的提示词">
+    <div class="head">
+      <div>
+        <h1>上一轮发给模型的提示词</h1>
+        <div class="sub">点每段的箭头展开，看这轮背后系统做了什么</div>
+      </div>
+      <button class="x" aria-label="关闭">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="gauge">
+      <div class="row"><span>上下文占用</span> <b>12%</b> <span>4,800 / 40,000 tok</span></div>
+      <div class="track"><div class="fill" style="width:12%"></div></div>
+    </div>
+
+    <div class="body">
+
+      <article class="tile open" data-k="persona">
+        <div class="tile-head"><span class="dot"></span><span class="label">人设</span><span class="spacer"></span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+        <div class="tile-body"><div class="inner"><div class="content">
+          <p class="lead" style="margin:0 0 8px">你是 RepoHunter 的仓库助手，帮用户理解他们在结果页注入进来的 GitHub 仓库。</p>
+          <p style="margin:0">用户注入的仓库的架构拆解，会拼在这条指令后面的「当前注入的仓库」里，包含用途、技术栈、关键设计、架构总览。回答就基于这些拆解和你对它们的理解。</p>
+        </div></div></div>
+      </article>
+
+      <article class="tile" data-k="memory">
+        <div class="tile-head"><span class="dot"></span><span class="label">记忆索引</span><span class="spacer"></span>
+          <span class="meta">1 条</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+        <div class="tile-body"><div class="inner"><div class="content">
+          <p style="margin:0 0 8px" class="faint"># 长期记忆索引（跨对话记住的，每条一句摘要，正文另外补上）</p>
+          <p class="mem" style="margin:0"><span class="k">[user]</span> rust-video-editor-tool（今天）：用户正在用 Rust 开发视频剪辑工具</p>
+        </div></div></div>
+      </article>
+
+      <article class="tile" data-k="recall">
+        <div class="tile-head"><span class="dot"></span><span class="label">召回判断</span><span class="spacer"></span>
+          <span class="meta">小模型 · 26 候选</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+        <div class="tile-body"><div class="inner"><div class="content">
+          <div class="chips">
+            <span class="chip">从 <b>26</b> 条候选里挑</span>
+            <span class="chip none">命中仓库 无</span>
+            <span class="chip none">命中记忆 无</span>
+            <span class="chip none">分不清 无</span>
+          </div>
+          <div class="code">
+            <div class="seg"><div class="cap">提示词 · system（挑选规则）</div><pre>靠描述的意思判断相不相关，不靠名字字面像。只挑清楚有用的，拿不准就不挑，全空是常态。</pre></div>
+            <div class="seg"><div class="cap">提示词 · user（候选清单 + 最近对话）</div><pre>最近的对话：
+user: 记住：我偏好极简的界面。</pre></div>
+            <div class="seg"><div class="cap">小模型的回答</div><pre>{"picks": [], "ambiguous": []}</pre></div>
+          </div>
+        </div></div></div>
+      </article>
+
+      <article class="tile" data-k="user">
+        <div class="tile-head"><span class="dot"></span><span class="label">user 消息</span><span class="spacer"></span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+        <div class="tile-body"><div class="inner"><div class="content">
+          <p class="lead" style="margin:0">记住：我偏好极简的界面。</p>
+        </div></div></div>
+      </article>
+
+      <article class="tile open" data-k="extract">
+        <div class="tile-head"><span class="dot"></span><span class="label">提取记忆</span><span class="spacer"></span>
+          <span class="meta">added 1</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+        <div class="tile-body"><div class="inner"><div class="content">
+          <div class="chips">
+            <span class="chip spark">added <b>1</b></span>
+            <span class="chip">updated <b>0</b></span>
+            <span class="chip">deleted <b>0</b></span>
+          </div>
+          <div class="code"><div class="seg"><pre>{
+  "action": "add",
+  "type": "user",
+  "name": "rust-video-editor-tool",
+  "description": "用户正在用 Rust 开发视频剪辑工具"
+}</pre></div></div>
+        </div></div></div>
+      </article>
+
+      <article class="tile" data-k="notes">
+        <div class="tile-head"><span class="dot"></span><span class="label">会话笔记</span><span class="spacer"></span>
+          <span class="meta">未触发</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+        <div class="tile-body"><div class="inner"><div class="content">
+          <p class="faint" style="margin:0">本轮未触发：游标 0，新增 2 条约 17 tok &lt; 1500</p>
+        </div></div></div>
+      </article>
+
+      <article class="tile" data-k="compact">
+        <div class="tile-head"><span class="dot"></span><span class="label">上下文压缩</span><span class="spacer"></span>
+          <span class="meta">note_replace · 10 → 4</span>
+          <span class="chev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span></div>
+        <div class="tile-body"><div class="inner"><div class="content">
+          <div class="chips">
+            <span class="chip">笔记顶替</span><span class="chip"><b>10</b> → <b>4</b> 条</span><span class="chip">熔断 <b>0</b></span>
+          </div>
+          <div class="code">
+            <div class="seg"><div class="cap">压缩前 · 10 条</div><pre>user：我们聊聊 TradingAgents 的反思机制
+assistant：它用轻量模型对已结算的决策生成反思…
+…（更早的 8 条已折叠）</pre></div>
+            <div class="seg"><div class="cap">压缩后 · 4 条</div><pre>（一条包着笔记的说明）＋ 最近 3 条原样保留</pre></div>
+          </div>
+        </div></div></div>
+      </article>
+
+      <div class="foot">这一轮背后系统做的四件事，都在这里</div>
+    </div>
+  </section>
+</div>
+
+<script>
+  // 折叠：点头切换 open，chevron 旋转 + 高度缓动由 CSS 接管
+  document.querySelectorAll(".tile-head").forEach(function (h) {
+    h.addEventListener("click", function () { h.closest(".tile").classList.toggle("open"); });
+  });
+  // 占用条进场时长出来
+  requestAnimationFrame(function () { setTimeout(function () {
+    var f = document.querySelector(".gauge .fill"); if (f) f.style.width = "12%";
+  }, 250); });
+</script>

@@ -13,9 +13,8 @@ import traceback
 from hunter.config import call_deepseek, MODELS
 from hunter.chat.context import build_segments, segments_to_system
 from hunter.chat.tools import get_toolbox, MAX_TOOL_CALLS
-from hunter import dev
 from hunter.memory import (
-    spawn_extraction, spawn_note, maybe_compact, reset_cursors_after_compact, force_truncate,
+    run_extraction, run_note, maybe_compact, reset_cursors_after_compact, force_truncate,
     estimate_tokens, COMPACT_THRESHOLD,
 )
 
@@ -28,6 +27,37 @@ def _looks_too_long(err: Exception) -> bool:
     """看这个异常像不像 DeepSeek 嫌上下文太长，命中就走 reactive 兜底再截一刀。"""
     s = str(err).lower()
     return any(m in s for m in _TOO_LONG_MARKS)
+
+
+# 撞上限后模型还硬要调工具，最多拒这么多轮就强制收尾，防它犯轴反复空调工具卡死
+REFUSAL_CAP = 2
+
+# 撞线拒绝、快到上限提醒、把调用写成文字时的纠正、以及反复漏时兜底给用户的收尾，中英各一套
+_BUDGET_ZH = {
+    "refuse": "查证次数已用完，不能再调工具了。请基于上面已经查到的材料作答，并说清楚还有哪些没能确认、为什么。",
+    "nudge": "查证次数快用完了，还剩 {n} 次。请优先查最关键的地方，准备收口作答。",
+    "leak_fix": "上一条回复把工具调用写成了文字，没有真正调用。要么用工具正常调用，要么直接基于已查到的材料作答，不要再把调用写成文字。",
+    "leak_net": "抱歉，这一轮查证出了点岔子，没能查全。你可以再问我一次，或者换个说法。",
+}
+_BUDGET_EN = {
+    "refuse": "You've used up your lookup budget and can't call tools any more. Answer from the material already gathered above, and say clearly what's still unconfirmed and why.",
+    "nudge": "Your lookup budget is almost gone, {n} left. Check the most important spots first and get ready to wrap up.",
+    "leak_fix": "Your last reply wrote a tool call out as text instead of actually calling it. Either call the tool properly, or answer from what you've already gathered. Don't write calls out as text.",
+    "leak_net": "Sorry, something went wrong with this round of lookups and I couldn't finish. Try asking again, or rephrase it.",
+}
+
+
+def _budget_texts(output_language: str) -> dict:
+    """撞线、提醒、纠正、收尾这几句按对话语言取，English 用英文，其余中文。"""
+    return _BUDGET_EN if output_language == "English" else _BUDGET_ZH
+
+
+def _has_tool_leak(text: str) -> bool:
+    """看正文里有没有混进工具调用的特殊 token（模型偶尔把调用写成文字漏出来）。
+
+    DeepSeek 的工具 token 用全角竖线包裹，正常 markdown 不会出现 `<｜` 或连着两个全角竖线。
+    """
+    return "<｜" in text or "｜｜" in text
 
 
 def _clean_payload(system: str, msgs: list[dict]) -> list[dict]:
@@ -61,7 +91,7 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
     try:
 
         # 回答前先试着压缩历史（只精简 messages，不碰下面才拼的 system），没到触发线就原样返回不动
-        work_msgs, did_compact, compact_path = await maybe_compact(
+        work_msgs, did_compact, compact_path, compact_detail = await maybe_compact(
             session_id, messages, MODELS["extract"], output_language)
 
         # 拼这轮的 system 提示词、拆成人设和召回记忆等好几个板块，召回要看最近几条消息才能判断用户提到了哪个仓库或记忆
@@ -112,22 +142,30 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
             stream = await _open_stream(toolbox is not None)
 
         # 小循环：模型要调工具就执行完灌回历史再来一轮，不调了这轮的文字就是最终回答。
-        # reply_parts 跨轮攒所有吐给用户的文字，used 计已用的工具次数，到上限下一轮不再挂工具逼它作答
+        # reply_parts 跨轮攒吐给用户的文字，used 计已用的工具次数，refusals 计撞线后还硬调工具的轮数
+        bt = _budget_texts(output_language)
         reply_parts = []
         used = 0
+        refusals = 0
+        warned = False
         while True:
 
-            # 流式收这一轮：文字增量直接推给前端，工具调用的增量按 index 攒起来等收完拼整
+            # 流式收这一轮：文字增量推给前端，工具调用的增量按 index 攒起来等收完拼整。
+            # leaked 标记这轮把工具调用写成了文字，一旦检出就不再往前端外显后面的字
             round_parts = []
             calls: dict = {}
+            leaked = False
             async for chunk in stream:
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
                 if delta.content:
                     round_parts.append(delta.content)
-                    reply_parts.append(delta.content)
-                    yield {"type": "delta", "text": delta.content}
+                    if leaked or _has_tool_leak("".join(round_parts)):
+                        leaked = True
+                    else:
+                        reply_parts.append(delta.content)
+                        yield {"type": "delta", "text": delta.content}
                 # 工具调用是流式分片来的：名字先到、参数串一段段续，按 index 归并到同一个调用上
                 for tc in (delta.tool_calls or []):
                     cur = calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
@@ -138,16 +176,47 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
                     if tc.function and tc.function.arguments:
                         cur["args"] += tc.function.arguments
 
+            # 这轮把调用写成了文字漏出来（没走正规通道）：外显已经掐了，纠正一句让它下轮好好说话；
+            # 反复漏就兜底给用户一句收尾，别留个空泡
+            if leaked and not calls:
+                refusals += 1
+                if refusals >= REFUSAL_CAP:
+                    if not reply_parts:
+                        yield {"type": "delta", "text": bt["leak_net"]}
+                        reply_parts.append(bt["leak_net"])
+                    break
+                payload.append({"role": "assistant", "content": "".join(round_parts)})
+                payload.append({"role": "user", "content": bt["leak_fix"]})
+                stream = await _open_stream(toolbox is not None)
+                continue
+
             # 这一轮没有工具调用，刚收的文字就是最终回答，跳出循环走收尾
             if not calls:
                 break
 
-            # 模型的工具调用请求原样进历史（格式必须合法，下一轮请求才认），然后逐个执行
+            # 模型的工具调用请求原样进历史（格式必须合法，下一轮请求才认）
             ordered = [calls[i] for i in sorted(calls)]
             payload.append({"role": "assistant", "content": "".join(round_parts),
                             "tool_calls": [{"id": c["id"], "type": "function",
                                             "function": {"name": c["name"], "arguments": c["args"]}}
                                            for c in ordered]})
+
+            # 次数已用满：这轮的调用全部拒绝执行，回一句拒绝话术逼它作答；拒够 REFUSAL_CAP 轮就强制收尾。
+            # 工具通道故意不撤，撤了模型会退回把调用写成文字漏给用户，靠这里的拒绝来控次数
+            if used >= MAX_TOOL_CALLS:
+                refusals += 1
+                for c in ordered:
+                    payload.append({"role": "tool", "tool_call_id": c["id"], "content": bt["refuse"]})
+                if refusals >= REFUSAL_CAP:
+                    # 拒到上限还只调工具、一个字没说，兜底给用户一句收尾别留空泡
+                    if not reply_parts:
+                        yield {"type": "delta", "text": bt["leak_net"]}
+                        reply_parts.append(bt["leak_net"])
+                    break
+                stream = await _open_stream(toolbox is not None)
+                continue
+
+            # 没撞线：逐个执行
             for c in ordered:
 
                 # 目标仓库本地还没克隆会现场浅克隆（要几秒），先吐一条活动提示别让用户干等
@@ -156,20 +225,22 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
                     yield {"type": "tool", "text": toolbox.describe_clone(repo_to_clone)}
                 yield {"type": "tool", "text": toolbox.describe(c["name"], c["args"])}
                 result = await toolbox.exec(c["name"], c["args"])
+                # 执行完再吐一条审计事件：工具名 + 入参 + 结果预览，前端折叠成可查的审计行
+                yield {"type": "tool_io", **toolbox.audit(c["name"], c["args"], result)}
                 payload.append({"role": "tool", "tool_call_id": c["id"], "content": result})
                 used += 1
 
-            # 次数没用完继续挂工具，用完了这一轮不挂，模型只能基于已有材料作答
-            stream = await _open_stream(used < MAX_TOOL_CALLS)
+            # 软着陆：刚跨进「快用完」的区间，往最后一条工具结果上贴一句提醒让它准备收口，只贴一次
+            if not warned and MAX_TOOL_CALLS - 2 <= used < MAX_TOOL_CALLS:
+                payload[-1]["content"] += "\n\n" + bt["nudge"].format(n=MAX_TOOL_CALLS - used)
+                warned = True
+
+            # 工具一直挂着，下一轮接着来
+            stream = await _open_stream(toolbox is not None)
 
         # 把收到的所有增量拼回完整回复，跟这轮发送的消息拼在一起，构成这轮聊完之后的完整历史
         reply = "".join(reply_parts)
         final_msgs = work_msgs + ([{"role": "assistant", "content": reply}] if reply else [])
-
-        # 这轮工具用了几次、日志攒了多少条、拼段时降级了几条，记进 dev 监控供审计视图看
-        if session_id and toolbox is not None and used:
-            dev.record(session_id, "tools", {"calls": used, "log_entries": len(toolbox.log),
-                                             "archived": toolbox.last_archived})
 
         # 这轮的请求和回复都写完了占用条的真实 token 数才算得出来，随 done 事件一并给前端，提前算会比实际占用小一截
         yield {"type": "done", "context_tokens": estimate_tokens(final_msgs)}
@@ -179,6 +250,10 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
             # 这轮触发了压缩，把压缩后的历史加上这轮回复一起吐给前端替换掉本地存的旧历史，下一轮发送的内容就变小了
             yield {"type": "compacted", "messages": final_msgs}
 
+            # 压缩明细（走哪条路径、压缩前后、熔断计数）跟着一条 compact 事件发出去，前端挂到这轮气泡，点头像看得到
+            if compact_detail:
+                yield {"type": "compact", **compact_detail}
+
             # 消息数组因为压缩被重新排过，提取记忆和写笔记原来记的游标位置全部失效，按压缩后的新长度重置这两个游标
             if session_id:
                 await asyncio.to_thread(reset_cursors_after_compact, session_id, len(final_msgs))
@@ -187,9 +262,16 @@ async def stream_chat(messages: list[dict], context: list[str], session_id: str 
             # 前端要等这轮走完才把 assistant 的回复补进它自己的历史，收到的 messages 参数还没有这轮回复，手动接上凑成完整一轮
             full_messages = messages + [{"role": "assistant", "content": reply}]
 
-            # 分别起一个提取长期记忆、一个续写会话笔记的后台任务，不阻塞这轮回答，各自失败也不连累这轮对话本身
-            spawn_extraction(session_id, full_messages, MODELS["extract"], output_language)
-            spawn_note(session_id, full_messages, MODELS["extract"], output_language)
+            # 提取长期记忆和续写会话笔记并发跑，跑完把各自过程作为 extract / notes 事件顺着同一条流发出去。
+            # done 已经吐过、回答早就到齐，这里只是让流多开几秒收这两件后台事的结果，各自失败吞掉不连累对话
+            ex_info, note_info = await asyncio.gather(
+                run_extraction(session_id, full_messages, MODELS["extract"], output_language),
+                run_note(session_id, full_messages, MODELS["extract"], output_language),
+            )
+            if ex_info:
+                yield {"type": "extract", **ex_info}
+            if note_info:
+                yield {"type": "notes", **note_info}
     except Exception as e:
 
         # 先把完整报错堆栈打到服务器日志方便排查，再把异常包成 error 事件传出去让这轮对话体面结束

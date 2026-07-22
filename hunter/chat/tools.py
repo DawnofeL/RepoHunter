@@ -15,8 +15,9 @@ from hunter.repo_detection.agent_tools import tool_schemas, make_dispatch, archi
 from hunter.repo_detection.prompt_text import texts as _ptexts
 from hunter.memory.compact.tokens import estimate_tokens
 
-# 每轮对话最多的工具调用次数，交互场景等不起搜索侧深挖那种二十次
-MAX_TOOL_CALLS = 6
+# 每轮对话最多的工具调用次数，交互场景等不起搜索侧深挖那种二十次。深问题要跨多个文件查，
+# 6 次常不够，抬到 10 留富余；再高纯是延迟和 token 浪费。结果超预算有滚动清理兜着，上下文不会撑爆
+MAX_TOOL_CALLS = 10
 
 # 「已查过的代码」块注入 system 的 token 预算，超了就把较早的结果降级成一行指针
 TOOL_HISTORY_BUDGET = 8000
@@ -148,6 +149,22 @@ class ChatToolbox:
         if len(self.repos) > 1 and repo:
             text = a["repo_prefix"].format(repo=repo) + text
         return text
+
+    def audit(self, name: str, raw_args: str, result: str) -> dict:
+        """把一次工具调用整理成审计三元组给前端：工具名、入参、结果预览（按语言截到 150 字/词）。"""
+        try:
+            args = json.loads(raw_args or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        empty = "(no args)" if self.lang == "English" else "(无参数)"
+        in_str = ", ".join(f"{k}={v}" for k, v in args.items()) if args else empty
+        text = (result or "").strip()
+        if self.lang == "English":
+            words = text.split()
+            out = text if len(words) <= 150 else " ".join(words[:150]) + " …"
+        else:
+            out = text if len(text) <= 150 else text[:150] + "…"
+        return {"name": name, "in": in_str, "out": out}
 
     async def exec(self, name: str, raw_args: str) -> str:
         """执行一次工具调用，返回给模型看的结果文本，一切异常都兜成文字说明不往上抛。"""

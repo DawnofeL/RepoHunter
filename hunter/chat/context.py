@@ -18,7 +18,6 @@ from datetime import datetime
 from hunter.config import load_skill
 from hunter import history
 from hunter import memory
-from hunter import dev
 from hunter.memory.recall import select_from_manifest
 
 
@@ -184,13 +183,11 @@ def _recall_manifest(generals: list[dict], injected: set,
 
 
 def _recall_done(segs: list[dict], debug: dict, session_id: str, t: dict = _TEXT_ZH) -> list[dict]:
-    """收尾：把召回判断记进 dev 监控，再作为一个不发给模型的段挂末尾，给前端点头像时可视化看。
+    """收尾：把召回判断作为一个不发给模型的段挂末尾，给前端点头像时可视化看。
 
     recall_debug 段的 kind 不在 segments_to_system 的白名单里，拼 system 时自动跳过、不发给模型；
     它只随 prompt 事件流到前端，让用户点头像就能看到这轮小模型召回判了什么。
     """
-    if session_id:
-        dev.record(session_id, "recall", debug)
     return segs + [{"label": t["lbl_recall_debug"], "kind": "recall_debug", "text": "", "recall": debug}]
 
 
@@ -201,8 +198,8 @@ async def _recall_segments(generals: list[dict], injected: set, messages: list[d
 
     仓库命中补全量拆解段（标 recalled，前面加一行「N 天前分析」提示可能过时）；记忆命中把正文合成
     「召回的记忆」一段，每条带「N 天前记的」；几个仓库分不清就拼「候选仓库」一段交助手反问。不管
-    有没有命中，末尾都挂一个 recall_debug 段带完整判断（清单、模型原始返回、三档挑了谁），既记进
-    dev 监控，也随 prompt 事件给前端点头像时看；这段不发给模型。
+    有没有命中，末尾都挂一个 recall_debug 段带完整判断（清单、模型原始返回、三档挑了谁），随
+    prompt 事件给前端点头像时看；这段不发给模型。
     """
     manifest, kind_map, note_meta = _recall_manifest(generals, injected, session_id)
     if not manifest:

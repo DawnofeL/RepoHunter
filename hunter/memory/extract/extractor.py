@@ -3,7 +3,7 @@
 攒够 6 轮或用户明说要记就调一次模型出动作，校验落库，成功才挪游标。单飞加补跑保证同时
 只跑一个、不漏最后一段。提取是后台事，不阻塞回答，失败只打日志。spawn_extraction 是入口，
 对话那边收完一轮调它。存取走 extract.chat_memories，仓库校验走 hunter.history 的仓库账本，
-调模型走 call_deepseek。每轮 dev.record 一份过程给开发者监控抽屉看。
+调模型走 call_deepseek。每次提取的过程作为 payload 返回给对话流，点头像时看得到。
 """
 
 import asyncio
@@ -11,7 +11,6 @@ import json
 import re
 import traceback
 
-from hunter import dev
 from hunter.config import call_deepseek, load_skill
 from hunter.memory.extract.chat_memories import (
     apply_actions,
@@ -32,6 +31,8 @@ _extract_running = False
 _extract_pending: tuple | None = None
 # 后台任务引用，防止 create_task 出来的任务被 GC 掉
 _bg_tasks: set = set()
+# await 版 run_extraction 用的锁：多轮并发时把提取串起来跑，别两个同时写库挪游标打架
+_run_lock = asyncio.Lock()
 
 
 def _wants_remember(new_msgs: list[dict]) -> bool:
@@ -73,22 +74,21 @@ def _parse_actions(raw: str) -> list[dict]:
 
 
 async def _run_extraction(session_id: str, messages: list[dict], model: str,
-                          output_language: str = "简体中文") -> None:
+                          output_language: str = "简体中文") -> dict:
     """跑一次提取：读游标取新消息，够阈值就调模型出动作，校验落库，成功才挪游标。
 
     只处理游标之后的新消息(增量)。repo 类的 full_name 对 history 仓库账本核验，编出来的丢掉；
     update/delete 的 name 校验和密钥扫描在 apply_actions 里做。整段成功才把游标推到最新，
-    失败游标不动，下次重提不漏。每步都往 dev.record 记一笔给监控抽屉。
+    失败游标不动，下次重提不漏。整个过程作为 payload 返回。
     """
     cursor = await asyncio.to_thread(get_extract_cursor, session_id)
     new_msgs = messages[cursor:]
     if len(new_msgs) < EXTRACT_EVERY_MESSAGES and not _wants_remember(new_msgs):
-        # 监控：不够阈值、也没说「记住」，这轮不提取，记一笔原因
-        dev.record(session_id, "extract", {
+        # 不够阈值、也没说「记住」，这轮不提取，把原因返回给对话流，点头像时看得到
+        return {
             "fired": False,
             "reason": f"游标 {cursor}，现有 {len(messages)} 条，新增 {len(new_msgs)} 条 < {EXTRACT_EVERY_MESSAGES}",
-        })
-        return
+        }
 
     manifest = await asyncio.to_thread(list_manifest)
     skill = (load_skill("extract_memories")
@@ -124,8 +124,8 @@ async def _run_extraction(session_id: str, messages: list[dict], model: str,
     # 挪游标到这次处理过的最后一条，成功才挪（失败会在上面抛异常、不到这里）
     await asyncio.to_thread(set_extract_cursor, session_id, len(messages))
 
-    # 监控：记这次提取的全过程——填好的提示词、模型原始返回、解析出的动作、编造被丢的、落库计数
-    dev.record(session_id, "extract", {
+    # 这次提取的全过程返回给对话流——填好的提示词、模型原始返回、解析出的动作、编造被丢的、落库计数
+    return {
         "fired": True,
         "prompt": [{"role": "system", "content": skill}, {"role": "user", "content": convo}],
         "raw": raw,
@@ -133,7 +133,7 @@ async def _run_extraction(session_id: str, messages: list[dict], model: str,
         "dropped": dropped,
         "stat": stat,
         "new_cursor": len(messages),
-    })
+    }
 
 
 async def _safe_extract(session_id: str, messages: list[dict], model: str,
@@ -172,3 +172,21 @@ def spawn_extraction(session_id: str, messages: list[dict], model: str,
         _extract_single_flight(session_id, list(messages), model, output_language))
     _bg_tasks.add(task)
     task.add_done_callback(_bg_tasks.discard)
+
+
+async def run_extraction(session_id: str, messages: list[dict], model: str,
+                         output_language: str = "简体中文") -> dict | None:
+    """awaited 版：跑一次提取，返回过程 payload 交给对话流 yield 给前端，失败吞掉返回 None。
+
+    对话那边在 done 之后 await 它，把返回的 payload 作为 extract 事件顺着同一条流发出去，
+    前端挂到当轮气泡、点头像时看得到。失败只打日志，绝不连累这轮对话。
+    """
+    if not session_id or not messages:
+        return None
+    try:
+        # 锁住，保证同一时刻只有一个提取在写库，多轮并发也串行执行不撞车
+        async with _run_lock:
+            return await _run_extraction(session_id, list(messages), model, output_language)
+    except Exception:
+        traceback.print_exc()
+        return None

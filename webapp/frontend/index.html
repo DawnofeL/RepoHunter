@@ -170,14 +170,16 @@
             <input type="number" id="in-topk" class="inp" value="20" min="1" max="100">
           </div>
           <div class="field">
-            <label class="mem-toggle">
-              <input type="checkbox" id="in-usemem" checked>
-              <span class="mem-toggle-track"><span class="mem-toggle-knob"></span></span>
+            <div class="mem-toggle">
+              <label class="mem-toggle-switch">
+                <input type="checkbox" id="in-usemem" checked>
+                <span class="mem-toggle-track"><span class="mem-toggle-knob"></span></span>
+              </label>
               <span class="mem-toggle-text">
                 <span class="field-label" data-i18n="form.usemem">Use Repo Memory</span>
                 <span class="field-sub" data-i18n="form.usemem.sub">reuse analysed repos, skip re-dissecting</span>
               </span>
-            </label>
+            </div>
           </div>
           <button class="btn btn-primary ws-search-btn" id="btn-search" data-i18n="form.search">Search</button>
           <div class="field-err" id="form-err"></div>
@@ -232,13 +234,12 @@
           <div class="ws-ctx" id="ws-ctx">
             <span class="ws-ctx-empty" data-i18n="ws.ctx.empty">Context is empty — inject a repo from the + button on the left</span>
           </div>
-          <!-- 开发者监控：开一个抽屉看这轮对话背后的 extract/notes/压缩过程 -->
-          <button class="ws-gear" id="ws-dev-btn" data-i18n-title="dev.monitor.btn" title="开发者监控">🔬</button>
           <!-- 齿轮：单独改对话用的 api/model，不影响左栏搜索。留空则回退凭证页 -->
+          <button class="ws-ctxbtn" id="ws-ctxbtn" data-i18n="ws.ctxbtn">记忆与上下文</button>
           <button class="ws-gear" id="ws-gear" data-i18n-title="ws.gear.title" title="Chat model settings">⚙</button>
         </div>
         <!-- 齿轮弹窗：默认藏，点齿轮开。改的东西只作用于右栏对话 -->
-        <div class="ws-cfg" id="ws-cfg" hidden>
+        <div class="ws-cfg" id="ws-cfg">
           <div class="ws-cfg-title" data-i18n="ws.cfg.title">Chat Model Settings</div>
           <label class="ws-cfg-lb" data-i18n="ws.cfg.key.lb">API Key</label>
           <input type="text" class="ws-cfg-inp" id="ws-cfg-key" spellcheck="false" data-i18n-ph="ws.cfg.key.ph" placeholder="Leave blank to use the credentials page key">
@@ -256,41 +257,13 @@
         </div>
         <div class="ws-input-wrap">
           <textarea class="ws-input" id="ws-input" data-i18n-ph="ws.input.ph" placeholder="给 AI 发消息…" rows="1"></textarea>
-          <button class="ws-send" id="ws-send" data-i18n="ws.send">发</button>
+          <button class="ws-send" id="ws-send" data-i18n="ws.send">发送</button>
         </div>
       </div>
     </div>
   </section>
 
 </main>
-
-<!-- ── 开发者监控抽屉（fixed 右侧滑入，放 main 外，免得被 #stage 的 z-index 压在 HUD 下）── -->
-<div class="dev-drawer" id="dev-drawer" hidden>
-  <div class="dev-head">
-    <span class="dev-title" data-i18n="dev.title">开发者监控</span>
-    <label class="dev-switch">
-      <input type="checkbox" id="dev-toggle">
-      <span data-i18n="dev.record">记录本轮过程</span>
-    </label>
-    <button class="dev-icon-btn" id="dev-audit-btn" data-i18n-title="dev.audit.btn" title="历史审计">🗂</button>
-    <button class="dev-close" id="dev-close">×</button>
-  </div>
-  <!-- 实时视图：当前会话背后的过程，实时流 -->
-  <div class="dev-live" id="dev-live">
-    <div class="dev-hint" id="dev-hint" data-i18n="dev.hint.live">打开记录后，跟 AI 聊天时这里实时显示背后的 extract 记忆、会话笔记、上下文压缩。</div>
-    <div class="dev-state" id="dev-state"></div>
-    <div class="dev-feed" id="dev-feed"></div>
-  </div>
-  <!-- 审计视图：落库的历史记录，重启后仍在。默认藏，点🗂进来 -->
-  <div class="dev-audit" id="dev-audit" hidden>
-    <div class="dev-audit-bar">
-      <button class="dev-audit-back" id="dev-audit-back" data-i18n="dev.au.back.live">返回实时</button>
-      <button class="dev-audit-clear" id="dev-audit-clear" data-i18n="dev.au.clear">清空全部</button>
-    </div>
-    <div class="dev-audit-list" id="dev-audit-list"></div>
-    <div class="dev-feed" id="dev-audit-feed" hidden></div>
-  </div>
-</div>
 
 <!-- ── Shared confirm dialog ──────────────────────── -->
 <div class="modal-overlay" id="confirm-modal" hidden>
@@ -308,7 +281,7 @@
 </div>
 
 <!-- ── 会话右键菜单：置顶/重命名/删除，浮层跟着鼠标位置定位 ──── -->
-<div class="ctx-menu" id="sess-ctxmenu" hidden>
+<div class="ctx-menu" id="sess-ctxmenu">
   <button class="ctx-menu-item" id="sess-ctx-pin" data-i18n="sess.ctx.pin">Pin</button>
   <button class="ctx-menu-item" id="sess-ctx-rename" data-i18n="sess.ctx.rename">Rename</button>
   <button class="ctx-menu-item ctx-menu-danger" id="sess-ctx-del" data-i18n="sess.ctx.del">Delete</button>

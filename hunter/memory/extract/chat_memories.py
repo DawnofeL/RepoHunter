@@ -210,6 +210,26 @@ def list_by_session(session_id: str) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+def list_all() -> list[dict]:
+    """全量取所有对话记忆（user/feedback/project/repo 四类都要），给记忆浏览窗口用。按更新时间倒序。"""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM chat_memories ORDER BY updated_at DESC").fetchall()
+    finally:
+        conn.close()
+    return [_row_to_dict(r) for r in rows]
+
+
+def delete_by_name(name: str) -> None:
+    """按名字删掉一条对话记忆，记忆浏览窗口的单条删除用。名字不存在就是无操作。"""
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM chat_memories WHERE name = ?", (name,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def list_manifest() -> list[dict]:
     """列所有记忆的 name 加 description 加 type，提取前注入给模型当「已有记忆清单」防重复。"""
     conn = _connect()

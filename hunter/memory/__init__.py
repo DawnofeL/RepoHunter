@@ -21,12 +21,14 @@ from hunter.memory.extract.chat_memories import (
     list_by_repo,
     list_by_session,
     list_manifest,
+    list_all,
+    delete_by_name,
     get_extract_cursor,
     set_extract_cursor,
 )
-from hunter.memory.extract.extractor import spawn_extraction
+from hunter.memory.extract.extractor import spawn_extraction, run_extraction
 from hunter.memory.compact import (
-    init_notes, get_note, spawn_note, list_note_manifest,
+    init_notes, get_note, spawn_note, run_note, list_note_manifest,
     maybe_compact, reset_cursors_after_compact, force_truncate,
     estimate_tokens, COMPACT_THRESHOLD,
 )

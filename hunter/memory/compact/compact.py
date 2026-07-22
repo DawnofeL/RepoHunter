@@ -10,7 +10,6 @@ maybe_compact 是入口，一进一出：给完整消息列表，返回可能压
 
 import asyncio
 
-from hunter import dev
 from hunter.memory.compact.tokens import estimate_tokens
 from hunter.memory.compact.note import get_note, set_note_cursor
 from hunter.memory.compact.fallback import summarise_fallback
@@ -111,43 +110,45 @@ def _hard_truncate(messages: list[dict]) -> list[dict]:
     return kept if kept else messages[-2:]
 
 
-def _record_compact(session_id: str, path: str, before: list[dict], after: list[dict]) -> None:
-    """把这次压缩记进 dev 监控：走了哪条路径、压缩前后的完整消息数组、当前熔断计数。
+def _compact_detail(session_id: str, path: str, before: list[dict], after: list[dict]) -> dict:
+    """拼这次压缩的明细：走了哪条路径、压缩前后的完整消息数组、当前熔断计数。
 
-    给审计抽屉的 compact 卡片用，能逐条对照原来几十条压成了「一条说明 + 最近几条」的样子。
+    maybe_compact 顺带把它 return 给对话流，点头像时看得出这轮压了什么，能逐条对照原来几十条
+    压成了「一条说明 + 最近几条」的样子。
     """
-    dev.record(session_id, "compact", {
+    return {
         "path": path,
         "before": before,
         "after": after,
         "fail_count": _fail_count.get(session_id, 0),
-    })
+    }
 
 
 async def maybe_compact(session_id: str, messages: list[dict], model: str,
-                        output_language: str = "简体中文") -> tuple[list[dict], bool, str]:
+                        output_language: str = "简体中文") -> tuple[list[dict], bool, str, dict | None]:
     """回答前试压缩：没到线原样返回；到线先笔记、再兜底、最后硬截。
 
-    返回（可能压过的消息，压没压，走的哪条路径）。path 在没压缩时是空串，压了就是那条路径的
-    标识（note_replace / summary_fallback / hard_truncate_circuit / hard_truncate_failed），
-    session 那层拿它塞进 prompt 事件，让点头像时看得出这轮是压过的。output_language 决定
-    压缩说明消息和兜底摘要用什么语言写。
+    返回（可能压过的消息，压没压，走的哪条路径，这次压缩的明细）。path 在没压缩时是空串，压了
+    就是那条路径的标识（note_replace / summary_fallback / hard_truncate_circuit /
+    hard_truncate_failed）。明细在没压缩时是 None，压了就是压缩前后数组和熔断计数，session 那层
+    拿它塞进 prompt 事件和 compact 事件，让点头像时看得出这轮压没压、压了什么。output_language
+    决定压缩说明消息和兜底摘要用什么语言写。
     """
     if estimate_tokens(messages) < COMPACT_THRESHOLD:
-        return messages, False, ""
+        return messages, False, "", None
 
     # 兜底连续失败过多，别再烧钱试，直接硬截让用户能继续发
     if _fail_count.get(session_id, 0) >= _MAX_FAIL:
         out = _hard_truncate(messages)
-        _record_compact(session_id, "hard_truncate_circuit", messages, out)
-        return out, True, "hard_truncate_circuit"
+        detail = _compact_detail(session_id, "hard_truncate_circuit", messages, out)
+        return out, True, "hard_truncate_circuit", detail
 
     note = await asyncio.to_thread(get_note, session_id) if session_id else {"note": "", "cursor": 0}
     kept = _try_note_compact(messages, note, output_language)
     if kept is not None:
         _fail_count.pop(session_id, None)
-        _record_compact(session_id, "note_replace", messages, kept)
-        return kept, True, "note_replace"
+        detail = _compact_detail(session_id, "note_replace", messages, kept)
+        return kept, True, "note_replace", detail
 
     # 笔记不可用，现写一份摘要兜底
     summary = await summarise_fallback(messages, model, output_language)
@@ -155,26 +156,20 @@ async def maybe_compact(session_id: str, messages: list[dict], model: str,
         _fail_count.pop(session_id, None)
         start = _expand_keep(messages, len(messages))
         out = _assemble(summary, messages[start:], output_language)
-        _record_compact(session_id, "summary_fallback", messages, out)
-        return out, True, "summary_fallback"
+        detail = _compact_detail(session_id, "summary_fallback", messages, out)
+        return out, True, "summary_fallback", detail
 
     # 兜底也失败，计一次熔断，硬截保命
     if session_id:
         _fail_count[session_id] = _fail_count.get(session_id, 0) + 1
     out = _hard_truncate(messages)
-    _record_compact(session_id, "hard_truncate_failed", messages, out)
-    return out, True, "hard_truncate_failed"
+    detail = _compact_detail(session_id, "hard_truncate_failed", messages, out)
+    return out, True, "hard_truncate_failed", detail
 
 
 def force_truncate(messages: list[dict], session_id: str = "") -> list[dict]:
-    """强制硬截、不看阈值。reactive 用：回答前压过了、模型仍嫌太长时再砍到最近一段。
-
-    传了 session_id 就记一条 reactive 压缩给监控，让审计抽屉也看得到这次补救的硬截。
-    """
-    out = _hard_truncate(messages)
-    if session_id:
-        _record_compact(session_id, "reactive_truncate", messages, out)
-    return out
+    """强制硬截、不看阈值。reactive 用：回答前压过了、模型仍嫌太长时再砍到最近一段。"""
+    return _hard_truncate(messages)
 
 
 def reset_cursors_after_compact(session_id: str, new_len: int) -> None:

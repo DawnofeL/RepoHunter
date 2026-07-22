@@ -12,7 +12,6 @@ import asyncio
 import json
 import traceback
 
-from hunter import dev
 from hunter.config import call_deepseek, load_skill
 from hunter.memory.memory_db import _connect
 from hunter.memory.compact.tokens import estimate_tokens
@@ -26,6 +25,8 @@ _note_running = False
 _note_pending: tuple | None = None
 # 后台任务引用，防止 create_task 出来的任务被 GC 掉
 _bg_tasks: set = set()
+# await 版 run_note 用的锁：多轮并发时把笔记重写串起来跑，别两个同时写库挪游标打架
+_run_lock = asyncio.Lock()
 
 
 def init_notes() -> None:
@@ -133,11 +134,11 @@ def _parse_note(raw: str) -> dict | None:
 
 
 async def _run_note(session_id: str, messages: list[dict], model: str,
-                    output_language: str = "简体中文") -> None:
+                    output_language: str = "简体中文") -> dict:
     """跑一次笔记重写：读游标取新消息，够阈值就拿旧笔记加新消息重写整份，成功才挪游标。
 
     每次是重写整份不是往后接，输入旧笔记加游标之后的新消息，产出新的完整笔记。写库成功才把
-    游标推到最新，失败游标不动、下次从老位置重来不漏。每步 dev.record 一份给监控抽屉。
+    游标推到最新，失败游标不动、下次从老位置重来不漏。整个过程作为 payload 返回给对话流。
     笔记按 output_language 写；整份重写，会话中途切语言的话下次重写自然换过来。
     """
     prev = await asyncio.to_thread(get_note, session_id)
@@ -145,12 +146,11 @@ async def _run_note(session_id: str, messages: list[dict], model: str,
     new_msgs = messages[cursor:]
     new_tokens = estimate_tokens(new_msgs)
     if new_tokens < NOTE_TOKEN_THRESHOLD:
-        # 监控：不够阈值这轮不写笔记，记一笔原因
-        dev.record(session_id, "notes", {
+        # 不够阈值这轮不写笔记，把原因返回给对话流，点头像时看得到
+        return {
             "fired": False,
             "reason": f"游标 {cursor}，新增 {len(new_msgs)} 条约 {new_tokens} tok < {NOTE_TOKEN_THRESHOLD}",
-        })
-        return
+        }
 
     none_note = "(no note yet)" if output_language == "English" else "（还没有笔记）"
     skill = (load_skill("session_note")
@@ -169,13 +169,12 @@ async def _run_note(session_id: str, messages: list[dict], model: str,
     raw = resp.choices[0].message.content or ""
     parsed = _parse_note(raw)
     if parsed is None:
-        # 解析坏了这轮不落库、游标不动，下次重来。当作没写成，记一笔原因给监控
-        dev.record(session_id, "notes", {"fired": False, "reason": "笔记模型输出解析失败", "raw": raw})
-        return
+        # 解析坏了这轮不落库、游标不动，下次重来。当作没写成，把原因返回给对话流
+        return {"fired": False, "reason": "笔记模型输出解析失败", "raw": raw}
 
     await asyncio.to_thread(_save_note, session_id, parsed["note"], parsed["brief"], len(messages))
     print(f"[note] session={session_id} 笔记已更新，游标 {cursor} -> {len(messages)}")
-    dev.record(session_id, "notes", {
+    return {
         "fired": True,
         "notes_cursor": len(messages),
         "notes_tokens": estimate_tokens([{"content": parsed["note"]}]),
@@ -183,7 +182,7 @@ async def _run_note(session_id: str, messages: list[dict], model: str,
         "prompt": [{"role": "system", "content": skill}, {"role": "user", "content": convo}],
         "raw": raw,
         "brief": parsed["brief"],
-    })
+    }
 
 
 async def _safe_note(session_id: str, messages: list[dict], model: str,
@@ -221,4 +220,22 @@ def spawn_note(session_id: str, messages: list[dict], model: str,
     task = asyncio.create_task(
         _note_single_flight(session_id, list(messages), model, output_language))
     _bg_tasks.add(task)
+
+
+async def run_note(session_id: str, messages: list[dict], model: str,
+                   output_language: str = "简体中文") -> dict | None:
+    """awaited 版：跑一次笔记重写，返回过程 payload 交给对话流 yield 给前端，失败吞掉返回 None。
+
+    对话那边在 done 之后 await 它，把返回的 payload 作为 notes 事件顺着同一条流发出去，前端挂到
+    当轮气泡、点头像时看得到。失败只打日志，绝不连累这轮对话。
+    """
+    if not session_id or not messages:
+        return None
+    try:
+        # 锁住，保证同一时刻只有一个笔记重写在写库，多轮并发也串行执行不撞车
+        async with _run_lock:
+            return await _run_note(session_id, list(messages), model, output_language)
+    except Exception:
+        traceback.print_exc()
+        return None
     task.add_done_callback(_bg_tasks.discard)

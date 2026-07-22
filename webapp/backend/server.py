@@ -12,8 +12,6 @@ from hunter import config
 from hunter import clone
 from hunter import memory
 from hunter import history
-from hunter import dev
-from hunter import dev_store
 from hunter import creds_store as creds
 from hunter.chat import stream_chat
 from hunter.pipeline import run_pipeline
@@ -39,8 +37,6 @@ history.init_repo_memory()
 memory.init_chat_sessions()
 memory.init_chat_memories()
 memory.init_notes()
-# 开发者监控的审计落库表，独立的 dev_audit.db
-dev_store.init_db()
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -94,11 +90,6 @@ class ChatSessionPatch(BaseModel):
     # 改会话元数据：标题、置顶，两个都可选，传了哪个就改哪个
     title: str | None = None
     pinned: bool | None = None
-
-
-class DevToggle(BaseModel):
-    # 开发者监控总开关，全局的，开了对话每轮才记中间过程
-    enabled: bool = False
 
 
 @app.get("/health")
@@ -277,82 +268,18 @@ async def chat_session_delete(sid: str) -> dict:
     return {"status": "ok"}
 
 
-@app.get("/chat/dev")
-async def chat_dev_status() -> dict:
-    # 开发者监控现在开着没
-    return {"enabled": dev.is_enabled()}
-
-
-@app.post("/chat/dev")
-async def chat_dev_toggle(req: DevToggle) -> dict:
-    # 开/关开发者监控，全局生效
-    if req.enabled:
-        dev.enable()
-    else:
-        dev.disable()
-    return {"enabled": dev.is_enabled()}
-
-
-# 审计路由必须排在 /chat/dev/{sid} 前面注册，否则 audit 会被当成 sid 吃掉
-@app.get("/chat/dev/audit")
-async def chat_dev_audit_list() -> dict:
-    # 列出落库审计过的会话摘要，审计浏览入口用
-    items = await asyncio.to_thread(dev_store.list_audit_sessions)
+@app.get("/chat/memories")
+async def chat_memories_list() -> dict:
+    # 全量取对话提取的长期记忆（四类），给头像面板里的记忆窗口浏览
+    items = await asyncio.to_thread(memory.list_all)
     return {"items": items}
 
 
-@app.get("/chat/dev/audit/{sid}")
-async def chat_dev_audit_get(sid: str) -> dict:
-    # 取某次会话落库的完整记录，不受内存 40 条上限限制，重启后仍在
-    records = await asyncio.to_thread(dev_store.get_audit_records, sid)
-    return {"records": records}
-
-
-@app.delete("/chat/dev/audit/{sid}")
-async def chat_dev_audit_delete(sid: str) -> dict:
-    # 清掉某次会话的审计记录
-    await asyncio.to_thread(dev_store.clear_audit, sid)
+@app.delete("/chat/memories/{name}")
+async def chat_memories_delete(name: str) -> dict:
+    # 按名字删一条对话记忆，记忆窗口的单条删除用
+    await asyncio.to_thread(memory.delete_by_name, name)
     return {"status": "ok"}
-
-
-@app.delete("/chat/dev/audit")
-async def chat_dev_audit_clear() -> dict:
-    # 清掉全部审计记录
-    await asyncio.to_thread(dev_store.clear_audit, None)
-    return {"status": "ok"}
-
-
-@app.get("/chat/dev/{sid}")
-async def chat_dev_snapshot(sid: str) -> dict:
-    # 面板打开时拉一份现状：已记录的中间过程 + 当前笔记 + 本会话提取出的记忆 + 全局通用记忆
-    records = dev.snapshot(sid)
-    note_text = await asyncio.to_thread(memory.get_notes, sid)
-    session_mem = await asyncio.to_thread(memory.list_by_session, sid)
-    general_mem = await asyncio.to_thread(memory.list_general)
-    return {
-        "enabled": dev.is_enabled(),
-        "records": records,
-        # 包成 {notes: 正文}，前端 renderDevState 读的是 snap.note.notes
-        "note": {"notes": note_text},
-        "session_memories": session_mem,
-        "general_memories": general_mem,
-    }
-
-
-@app.get("/chat/dev/{sid}/stream")
-async def chat_dev_stream(sid: str) -> EventSourceResponse:
-    # 实时推这个会话的监控记录。面板订这条长连接，record 一有新记录就流过来。
-    # 只推实时，历史靠上面 snapshot 那个 GET 先拉一份，避免重放和实时重复
-    async def _sse():
-        q = dev.subscribe(sid)
-        try:
-            while True:
-                rec = await q.get()
-                yield sse_event(rec)
-        finally:
-            dev.unsubscribe(sid, q)
-
-    return EventSourceResponse(_sse())
 
 
 @app.get("/")
