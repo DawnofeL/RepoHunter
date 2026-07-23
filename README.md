@@ -1,5 +1,11 @@
 # RepoHunter · GitHub 仓库发现与深度排序
 
+
+
+
+https://github.com/user-attachments/assets/a215890f-ce1e-405e-9425-cc9bf0030ec1
+
+
 学习一个新领域，通常需要几个对口的开源项目作参考。用 Claude Code、Codex 这类通用 agent 来找，存在几处明显短板，RepoHunter 针对每一处给出对应设计。
 
 - **检索串行**。通用 agent 一次只能逐个翻看项目，无法并行探查大批候选。RepoHunter 对所有候选仓库并发探查，每条需求也并发辩论裁决，单次检索十来个候选即有两百来次模型调用并行执行。
@@ -15,8 +21,6 @@
 
 
 
-https://github.com/user-attachments/assets/4d1fa603-6913-4621-a887-9cbf39f2f2be
-
 
 
 > ## 完整流程图
@@ -27,7 +31,6 @@ https://github.com/user-attachments/assets/4d1fa603-6913-4621-a887-9cbf39f2f2be
 
 踩坑历史与对应优化见 [`docs/踩坑.md`](docs/踩坑.md)。
 
-https://github.com/user-attachments/assets/7374628d-dfed-4976-a3c3-88ce9684a375
 
 
 
