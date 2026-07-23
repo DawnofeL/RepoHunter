@@ -948,6 +948,10 @@ body {
 /* 工具审计行：一次调用一块，工具名当标题 + IN 入参 + OUT 结果预览，折叠进「查证代码 N 步」里点开看 */
 .ws-tio { padding:6px 0; border-top:1px solid rgba(184,130,10,0.14); }
 .ws-tio:first-child { border-top:none; padding-top:2px; }
+/* 流式期间只亮最近 3 条审计行，更早的收进「前面还有 N 步」一行，点开全展 */
+.ws-tio-hid { display:none; }
+.ws-toolact-more { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--amber);
+  cursor:pointer; user-select:none; padding:2px 0; }
 .ws-tio-name { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700;
   color:var(--amber); margin-bottom:3px; word-break:break-all; }
 .ws-tio-kv { display:flex; gap:8px; font-family:'JetBrains Mono',monospace; font-size:10px;

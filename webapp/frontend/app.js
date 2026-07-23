@@ -277,6 +277,8 @@
       "ws.ctxbtn": "记忆与上下文",
       "ws.tools.head.pre": "查证代码 ",
       "ws.tools.head.post": " 步",
+      "ws.tools.more.pre": "+ 前面还有 ",
+      "ws.tools.more.post": " 步",
       "ws.input.ph": "给 AI 发消息…",
       "ws.send": "发送",
       "hud.workbench": "🔬 工作台",
@@ -505,6 +507,8 @@
       "ws.ctxbtn": "Memory & context",
       "ws.tools.head.pre": "Code lookups: ",
       "ws.tools.head.post": " steps",
+      "ws.tools.more.pre": "+ ",
+      "ws.tools.more.post": " earlier steps",
       "ws.input.ph": "Message the AI…",
       "ws.send": "Send",
       "hud.workbench": "🔬 Workbench",
@@ -1093,12 +1097,34 @@
     return row;
   }
 
+  // 流式期间只亮最近 3 条审计行，更早的收进「前面还有 N 步」一行，点它随时全展
+  function trimLiveRows(panel) {
+    if (panel._showAll) return;
+    const rows = panel.lines.querySelectorAll(".ws-tio");
+    const extra = rows.length - 3;
+    rows.forEach((r, i) => r.classList.toggle("ws-tio-hid", i < extra));
+    if (extra > 0) {
+      if (!panel._more) {
+        panel._more = document.createElement("div");
+        panel._more.className = "ws-toolact-more";
+        panel._more.addEventListener("click", () => {
+          panel._showAll = true;
+          panel.lines.querySelectorAll(".ws-tio-hid").forEach((r) => r.classList.remove("ws-tio-hid"));
+          if (panel._more) { panel._more.remove(); panel._more = null; }
+        });
+      }
+      panel.lines.insertBefore(panel._more, panel.lines.firstChild);
+      panel._more.textContent = t("ws.tools.more.pre") + extra + t("ws.tools.more.post");
+    }
+  }
+
   // 收尾：有审计明细（ioList）就用审计行替换流式活动行，折叠成「查证代码 N 步」，点开审计。
   // ioList 为空时退回原来的活动行（比如旧会话只存了文案字符串）
   function finishToolPanel(panel, ioList) {
     const rows = ioList && ioList.length ? ioList : null;
     if (rows) {
       panel.lines.innerHTML = "";
+      panel._more = null;
       rows.forEach((io) => panel.lines.appendChild(toolIORow(io)));
     }
     const n = rows ? rows.length : panel.lines.children.length;
@@ -1478,14 +1504,25 @@
             // 召回帮着捞进来的仓库，转正成右栏芯片，往后每轮常驻（跟点过「+」一样，用户可随手删）
             (ev.repos || []).forEach((r) => injectCtx(r, true));
           } else if (ev.type === "tool") {
-            // 助手正在翻代码：活动行实时冒进气泡上方的工具面板
+            // 正在执行的动作：面板底部一行瞬态小字，执行完会被审计行顶掉
             if (!toolPanel) toolPanel = buildToolPanel(bubble);
-            addToolLine(toolPanel, ev.text || "");
+            if (!toolPanel._status) {
+              toolPanel._status = document.createElement("div");
+              toolPanel._status.className = "ws-toolact-line";
+            }
+            toolPanel._status.textContent = ev.text || "";
+            toolPanel.lines.appendChild(toolPanel._status);
             toolLines.push(ev.text || "");
             $("ws-chat").scrollTop = $("ws-chat").scrollHeight;
           } else if (ev.type === "tool_io") {
-            // 一次工具执行完的审计数据：攒起来，收尾时渲染成审计行
-            toolIO.push({ name: ev.name, in: ev.in, out: ev.out });
+            // 一次工具执行完，审计行（名字/入参/结果预览）当场冒出来，不等收尾
+            const io = { name: ev.name, in: ev.in, out: ev.out };
+            toolIO.push(io);
+            if (!toolPanel) toolPanel = buildToolPanel(bubble);
+            if (toolPanel._status) { toolPanel._status.remove(); toolPanel._status = null; }
+            toolPanel.lines.appendChild(toolIORow(io));
+            trimLiveRows(toolPanel);
+            $("ws-chat").scrollTop = $("ws-chat").scrollHeight;
           } else if (ev.type === "delta") {
             acc += ev.text || "";
             // 首字到了就退出加载态：头像从呼吸绿点定格回墨绿圆，绿点游标改跟在文本末尾
