@@ -15,6 +15,10 @@
 
 
 
+https://github.com/user-attachments/assets/4d1fa603-6913-4621-a887-9cbf39f2f2be
+
+
+
 > ## 完整流程图
 >
 > **用浏览器打开 [`flowchart.html`](flowchart.html)**，一张图看清从需求到排序的全链路。
@@ -22,6 +26,10 @@
 设计细节见 [`docs/Repo_Detection.md`](docs/Repo_Detection.md)。
 
 踩坑历史与对应优化见 [`docs/踩坑.md`](docs/踩坑.md)。
+
+https://github.com/user-attachments/assets/7374628d-dfed-4976-a3c3-88ce9684a375
+
+
 
 
 
