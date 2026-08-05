@@ -1,0 +1,231 @@
+<!DOCTYPE html><html lang="zh"><head><meta charset="UTF-8">
+<title>布局引擎输出 · 零 LLM 参与</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#ECE8DF;font-family:"Be Vietnam Pro","Microsoft YaHei",sans-serif;
+  overflow:hidden;color:#1C1A12;
+  background-image:radial-gradient(circle,rgba(28,26,18,.05) 1px,transparent 1px);
+  background-size:30px 30px}
+#hud{position:fixed;top:18px;left:24px;z-index:99;pointer-events:none}
+#hud h1{font-size:14px;font-weight:800;letter-spacing:.03em}
+#hud p{font-family:monospace;font-size:9px;color:rgba(28,26,18,.45);
+  letter-spacing:.18em;margin-top:4px;text-transform:uppercase}
+#vp{position:fixed;inset:0;overflow:hidden;cursor:grab}
+#vp.drag{cursor:grabbing}
+#canvas{position:absolute;transform-origin:0 0;
+  width:2300px;height:3170px}
+.region{position:absolute;border:1px dashed rgba(28,26,18,.10);border-radius:16px;z-index:0}
+.region span{position:absolute;top:-9px;left:18px;background:#ECE8DF;padding:0 8px;
+  font-family:monospace;font-size:10px;letter-spacing:.24em;
+  color:rgba(28,26,18,.28);text-transform:uppercase}
+svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible;z-index:1}
+.edge{fill:none;stroke:rgba(28,26,18,.24);stroke-width:1.5}
+.e-dash{stroke:rgba(184,130,10,.5);stroke-dasharray:6 5}
+.e-fb{stroke:rgba(58,106,102,.5);stroke-dasharray:5 6}
+.elabel{position:absolute;transform:translate(-50%,-50%);z-index:3;
+  font-family:monospace;font-size:9px;color:rgba(28,26,18,.55);
+  background:#ECE8DF;padding:2px 7px;border-radius:5px;
+  border:1px solid rgba(28,26,18,.08);white-space:nowrap}
+.node{position:absolute;transform:translate(-50%,-50%);z-index:5}
+.card{border-radius:13px;padding:12px 16px 13px;position:relative;
+  background:#F7F4EC;border:1px solid rgba(28,26,18,.10);
+  box-shadow:0 2px 10px rgba(28,26,18,.06)}
+.card::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:3px;
+  border-radius:0 3px 3px 0;background:var(--c)}
+.k-core{background:#262318;color:#F4F1E8;border-color:transparent;
+  box-shadow:0 6px 20px rgba(28,26,18,.28)}
+.k-start{background:#4A6741;color:#F4F1E8;border-color:transparent}
+.k-out{background:#E8E3D6;border-color:rgba(74,103,65,.35)}
+.k-warn{background:#F3E6D8;border-color:rgba(176,106,74,.35)}
+.tag{font-family:monospace;font-size:8px;letter-spacing:.16em;
+  color:rgba(28,26,18,.35);margin-bottom:3px}
+.k-core .tag,.k-start .tag{color:rgba(244,241,232,.42)}
+.title{font-size:13.5px;font-weight:700;letter-spacing:.01em}
+.sub{font-size:10.5px;color:rgba(28,26,18,.55);margin-top:3px;line-height:1.45}
+.k-core .sub,.k-start .sub{color:rgba(244,241,232,.65)}
+</style></head><body>
+<div id="hud"><h1>RepoHunter · 布局引擎自动生成</h1>
+<p>33 nodes · 0 LLM calls · pure python</p></div>
+<div id="vp"><div id="canvas">
+<div class="region" style="left:820px;top:30px;width:420px;height:740px"><span>S1 · 需求理解与检索</span></div><div class="region" style="left:1120px;top:330px;width:480px;height:840px"><span>S2 · 编译标准与粗筛</span></div><div class="region" style="left:760px;top:1090px;width:840px;height:480px"><span>S3 · 深挖拆解</span></div><div class="region" style="left:760px;top:1650px;width:480px;height:820px"><span>S4 · 辩论与裁决</span></div><div class="region" style="left:1600px;top:2270px;width:120px;height:200px"><span>搜索侧记忆</span></div><div class="region" style="left:1120px;top:2550px;width:120px;height:220px"><span>对话主循环</span></div><div class="region" style="left:760px;top:2690px;width:1200px;height:220px"><span>对话侧记忆</span></div>
+<svg><polyline class="edge e-flow" points="1180,110 1180,156"/><polyline class="edge e-flow" points="1180,244 1180,288 880,288 880,332"/><polyline class="edge e-flow" points="1180,244 1180,288 1480,288 1480,332"/><polyline class="edge e-flow" points="1180,244 1180,572"/><polyline class="edge e-flow" points="880,408 880,452"/><polyline class="edge e-flow" points="880,528 880,572"/><polyline class="edge e-flow" points="880,648 880,692"/><polyline class="edge e-flow" points="1050,610 1010,610"/><polyline class="edge e-flow" points="880,768 880,800 1180,800 1180,832"/><polyline class="edge e-flow" points="1480,408 1480,620 1180,620 1180,832"/><polyline class="edge e-flow" points="1180,908 1180,952"/><polyline class="edge e-flow" points="1180,1028 1180,1060 1540,1060 1540,1092"/><polyline class="edge e-flow" points="1180,1028 1180,1092"/><polyline class="edge e-flow" points="1180,1168 1180,1226"/><polyline class="edge e-flow" points="1040,1270 950,1270"/><polyline class="edge e-flow" points="820,1308 820,1372"/><polyline class="edge e-flow" points="1320,1270 1410,1270"/><polyline class="edge e-flow" points="1180,1314 1180,1372"/><polyline class="edge e-flow" points="1540,1308 1540,1340 1180,1340 1180,1372"/><polyline class="edge e-flow" points="1180,1448 1180,1492"/><polyline class="edge e-flow" points="1180,1568 1180,1646"/><polyline class="edge e-flow" points="1180,1734 1180,1792"/><polyline class="edge e-flow" points="1180,1868 1180,1890 820,1890 820,1912"/><polyline class="edge e-flow" points="1180,1868 1180,2032"/><polyline class="edge e-flow" points="820,1988 820,2010 1180,2010 1180,2032"/><polyline class="edge e-flow" points="1180,2108 1180,2152"/><polyline class="edge e-flow" points="1180,2228 1180,2272"/><polyline class="edge e-flow" points="1180,2348 1180,2392"/><polyline class="edge e-dash" points="1310,2310 1530,2310"/><polyline class="edge e-flow" points="1660,2348 1660,2392"/><polyline class="edge e-dash" points="1660,2468 1660,2507 1180,2507 1180,2546"/><polyline class="edge e-flow" points="1180,2634 1180,2663 820,2663 820,2692"/><polyline class="edge e-flow" points="1180,2634 1180,2692"/><polyline class="edge e-flow" points="1180,2634 1180,2663 1540,2663 1540,2692"/><polyline class="edge e-flow" points="1180,2634 1180,2663 1900,2663 1900,2692"/><polyline class="edge e-flow" points="1180,2768 1180,2832"/><polyline class="edge e-fb" points="1310,2870 1380,2870 1380,2730 1310,2730"/></svg>
+<div class="elabel" style="left:1030px;top:288px">抽查询</div><div class="elabel" style="left:1330px;top:288px">并行编标准</div><div class="elabel" style="left:1180px;top:408px">开 MCP 连接</div><div class="elabel" style="left:1030px;top:610px">session</div><div class="elabel" style="left:1030px;top:800px">候选池</div><div class="elabel" style="left:1330px;top:620px">判定标准</div><div class="elabel" style="left:1360px;top:1060px">明显不符</div><div class="elabel" style="left:1180px;top:1060px">放行</div><div class="elabel" style="left:995px;top:1270px">每轮调用</div><div class="elabel" style="left:820px;top:1340px">读得越多越要清</div><div class="elabel" style="left:1365px;top:1270px">烧光 / 空转</div><div class="elabel" style="left:1180px;top:1343px">最终 JSON</div><div class="elabel" style="left:1360px;top:1340px">逼停出的 JSON 同过审计</div><div class="elabel" style="left:1180px;top:1763px">每条 keypoint</div><div class="elabel" style="left:1000px;top:1890px">不够 开清单</div><div class="elabel" style="left:1180px;top:1950px">够判 直接辩</div><div class="elabel" style="left:1420px;top:2310px">save_run 写回</div><div class="elabel" style="left:1660px;top:2370px">upsert 追时间线</div><div class="elabel" style="left:1420px;top:2507px">拆解读回对话侧</div><div class="elabel" style="left:1000px;top:2663px">答前压缩</div><div class="elabel" style="left:1180px;top:2663px">拼 system</div><div class="elabel" style="left:1360px;top:2663px">聊完后台提取</div><div class="elabel" style="left:1540px;top:2663px">聊完续写笔记</div><div class="elabel" style="left:1180px;top:2800px">先跑挑选器</div><div class="elabel" style="left:1310px;top:2800px">命中补段</div>
+
+<div class="node card k-start" style="left:1180px;top:70px;width:280px;--c:#5878A0">
+  <div class="tag">A</div>
+  <div class="title">需求清单</div>
+  <div class="sub">keypoints + 语言过滤 入口</div>
+</div>
+<div class="node card k-core" style="left:1180px;top:200px;width:280px;--c:#5878A0">
+  <div class="tag">PIPE</div>
+  <div class="title">Pipeline 总编排</div>
+  <div class="sub">串联五阶段 · 边跑边吐事件流</div>
+</div>
+<div class="node card k-glass" style="left:880px;top:370px;width:260px;--c:#5878A0">
+  <div class="tag">QU</div>
+  <div class="title">抽搜索查询</div>
+  <div class="sub">从需求清单抽项目身份概念</div>
+</div>
+<div class="node card k-glass" style="left:880px;top:490px;width:260px;--c:#5878A0">
+  <div class="tag">LG</div>
+  <div class="title">语言归一</div>
+  <div class="sub">别名 精确 模糊 三级纠错</div>
+</div>
+<div class="node card k-glass" style="left:880px;top:610px;width:260px;--c:#5878A0">
+  <div class="tag">SR</div>
+  <div class="title">并发搜 GitHub</div>
+  <div class="sub">剥引号合 OR 组 拼硬过滤</div>
+</div>
+<div class="node card k-out" style="left:880px;top:730px;width:260px;--c:#5878A0">
+  <div class="tag">POOL</div>
+  <div class="title">候选仓库池</div>
+  <div class="sub">按 full_name 并集去重</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:610px;width:260px;--c:#5878A0">
+  <div class="tag">MC</div>
+  <div class="title">MCP 连接封装</div>
+  <div class="sub">握手 重试 返回统一解析</div>
+</div>
+<div class="node card k-glass" style="left:1480px;top:370px;width:260px;--c:#A88C35">
+  <div class="tag">KU</div>
+  <div class="title">编译判定标准</div>
+  <div class="sub">每条 keypoint 一把统一尺子</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:870px;width:260px;--c:#A88C35">
+  <div class="tag">PF</div>
+  <div class="title">预抓六样资料页</div>
+  <div class="sub">README 清洗 两层树 stars size</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:990px;width:260px;--c:#A88C35">
+  <div class="tag">GATE</div>
+  <div class="title">gate 粗筛</div>
+  <div class="sub">不带工具一次调用 只判方向</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:1130px;width:260px;--c:#4A7858">
+  <div class="tag">CLONE</div>
+  <div class="title">浅克隆到本地</div>
+  <div class="sub">depth 1 只取当前快照</div>
+</div>
+<div class="node card k-core" style="left:1180px;top:1270px;width:280px;--c:#4A7858">
+  <div class="tag">EXP</div>
+  <div class="title">工具循环深挖</div>
+  <div class="sub">读真源码摆事实 只探不判</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:1410px;width:260px;--c:#4A7858">
+  <div class="tag">AUD</div>
+  <div class="title">锚点审计自愈</div>
+  <div class="sub">打回重修一次 仍坏删点</div>
+</div>
+<div class="node card k-out" style="left:1180px;top:1530px;width:260px;--c:#4A7858">
+  <div class="tag">DIS</div>
+  <div class="title">客观架构拆解</div>
+  <div class="sub">不含任何 keypoint</div>
+</div>
+<div class="node card k-core" style="left:1180px;top:1690px;width:280px;--c:#94694B">
+  <div class="tag">FAN</div>
+  <div class="title">按 keypoint 扇出</div>
+  <div class="sub">每条一条独立链路 全并发</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:1830px;width:260px;--c:#94694B">
+  <div class="tag">TRI</div>
+  <div class="title">分诊</div>
+  <div class="sub">中立一问 拆解够不够判这条</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:2070px;width:260px;--c:#94694B">
+  <div class="tag">DEB</div>
+  <div class="title">正反辩论</div>
+  <div class="sub">同一份材料 各表一次态</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:2190px;width:260px;--c:#94694B">
+  <div class="tag">ADJ</div>
+  <div class="title">裁决</div>
+  <div class="sub">干净上下文收口 hit / miss</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:2310px;width:260px;--c:#94694B">
+  <div class="tag">SCR</div>
+  <div class="title">对齐与计数</div>
+  <div class="sub">按位置对齐 漏判补 miss</div>
+</div>
+<div class="node card k-out" style="left:1180px;top:2430px;width:260px;--c:#94694B">
+  <div class="tag">RES</div>
+  <div class="title">排序结果</div>
+  <div class="sub">命中数降序 平手比 stars</div>
+</div>
+<div class="node card k-core" style="left:1180px;top:2590px;width:280px;--c:#897595">
+  <div class="tag">CHAT</div>
+  <div class="title">对话主循环</div>
+  <div class="sub">stream_chat 流式答话 事件流</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:2730px;width:260px;--c:#897595">
+  <div class="tag">CTX</div>
+  <div class="title">拼 system</div>
+  <div class="sub">人设 索引 注入仓库 召回段</div>
+</div>
+<div class="node card k-glass" style="left:1180px;top:2870px;width:260px;--c:#728068">
+  <div class="tag">RCL</div>
+  <div class="title">按需召回</div>
+  <div class="sub">小模型挑选器 三档输出</div>
+</div>
+<div class="node card k-warn" style="left:1540px;top:1130px;width:260px;--c:#A88C35">
+  <div class="tag">SKIP</div>
+  <div class="title">跳过沉底</div>
+  <div class="sub">置灰不淘汰 拿不准一律放行</div>
+</div>
+<div class="node card k-warn" style="left:1540px;top:1270px;width:260px;--c:#4A7858">
+  <div class="tag">STOP</div>
+  <div class="title">逼停与熔断</div>
+  <div class="sub">预算烧光 / 同指纹三连撞</div>
+</div>
+<div class="node card k-glass" style="left:820px;top:1270px;width:260px;--c:#4A7858">
+  <div class="tag">TL</div>
+  <div class="title">四个只读工具</div>
+  <div class="sub">列 读 搜 找 全对克隆操作</div>
+</div>
+<div class="node card k-glass" style="left:820px;top:1410px;width:260px;--c:#4A7858">
+  <div class="tag">CLN</div>
+  <div class="title">滚动清理</div>
+  <div class="sub">到线归档旧返回 占位可重读</div>
+</div>
+<div class="node card k-glass" style="left:820px;top:1950px;width:260px;--c:#94694B">
+  <div class="tag">EVD</div>
+  <div class="title">按需取证</div>
+  <div class="sub">纯代码照清单抠符号周围</div>
+</div>
+<div class="node card k-glass" style="left:1660px;top:2310px;width:260px;--c:#3E6E82">
+  <div class="tag">RUNS</div>
+  <div class="title">搜索账本 runs</div>
+  <div class="sub">一次搜索一行 轻量增量</div>
+</div>
+<div class="node card k-glass" style="left:1660px;top:2430px;width:260px;--c:#3E6E82">
+  <div class="tag">RM</div>
+  <div class="title">仓库账本 repo_memory</div>
+  <div class="sub">一仓库一行 拆解分语言格</div>
+</div>
+<div class="node card k-glass" style="left:820px;top:2730px;width:260px;--c:#728068">
+  <div class="tag">CPT</div>
+  <div class="title">会话压缩</div>
+  <div class="sub">笔记优先 摘要兜底 硬截保命</div>
+</div>
+<div class="node card k-glass" style="left:1540px;top:2730px;width:260px;--c:#728068">
+  <div class="tag">EXT</div>
+  <div class="title">记忆提取</div>
+  <div class="sub">攒 12 条或说「记住」 单飞补跑</div>
+</div>
+<div class="node card k-glass" style="left:1900px;top:2730px;width:260px;--c:#728068">
+  <div class="tag">NOTE</div>
+  <div class="title">会话笔记</div>
+  <div class="sub">攒 1500 tok 整份重写</div>
+</div>
+</div></div>
+<script>
+const vp=document.getElementById('vp'),cv=document.getElementById('canvas');
+let s=0.42,tx=180,ty=30,drag=false,lx=0,ly=0;
+function apply(){cv.style.transform=`translate(${tx}px,${ty}px) scale(${s})`}
+apply();
+vp.addEventListener('mousedown',e=>{drag=true;lx=e.clientX;ly=e.clientY;vp.classList.add('drag')});
+addEventListener('mouseup',()=>{drag=false;vp.classList.remove('drag')});
+addEventListener('mousemove',e=>{if(!drag)return;tx+=e.clientX-lx;ty+=e.clientY-ly;lx=e.clientX;ly=e.clientY;apply()});
+vp.addEventListener('wheel',e=>{e.preventDefault();
+  const r=vp.getBoundingClientRect(),mx=e.clientX-r.left,my=e.clientY-r.top;
+  const ns=Math.min(2,Math.max(.15,s*(e.deltaY<0?1.1:.9)));
+  tx=mx-(mx-tx)*(ns/s);ty=my-(my-ty)*(ns/s);s=ns;apply()},{passive:false});
+</script></body></html>
